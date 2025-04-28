@@ -1,0 +1,361 @@
+;----------------------------------------------------------------------------
+; Virtual Desktop Accessor Static Wrapper
+; requires VirtualDesktopAccessor.dll
+; Virtual Desktop Accessor DLL entry points
+; TODO : WinActivate taskbar before switching and WinMinimize taskbar after arriving
+; Don't have a backwards compatible Version 11 so we have to chose based on windows version
+; https://github.com/Ciantic/VirtualDesktopAccessor/releases/ win10 and win 11 versions
+; Windows 10: https://github.com/Ciantic/VirtualDesktopAccessor - some recent updates for win11, broke win10
+;             https://github.com/Ciantic/VirtualDesktopAccessor/tree/master/x64/Release June 2, 2019 final version
+;             https://github.com/sdias/win-10-virtual-desktop-enhancer, autokey scripts only
+; Windows 11: https://github.com/skottmckay/VirtualDesktopAccessor - active, Working on latest windows 11
+;             https://github.com/Ciantic/VirtualDesktopAccessor/releases/ - works fine, written in Rust, Windows 11 only, 22631.3085 now)
+;            +https://github.com/itzjakm/VirtualDesktopAccessor/releases Using one windows 11 22631.3085 or greater Build 22635.2915
+;             https://github.com/bforbenny/VirtualDesktopAccessor, probably another fork, not as active, tested with 22621.1105
+
+;             https://github.com/FuPeiJiang/VD.ahk/tree/v2_port, AHK native version, 1000 lines of code
+;             https://github.com/Lej77/VirtualDesktopAccessor/tree/patch-windows-10-support, recent branch supposed to support win11 & 10, patch to Ciantic
+; AHK solution https://github.com/FuPeiJiang/VD.ahk
+;----------------------------------------------------------------------------
+; #Include ..\common\dllFactory.ahk2            ; Common files, mostly dllcall window related
+; #Include ..\common\WindowFunctions.ahk2     ; Window Related Functions
+class vda {
+   static __new() {
+      try {
+         dlog("Loading VDA: Windows Version " A_OSVersion)
+         ; I think Win 10 recent builds can also use the vda11 version (along with win 11), not 100% though
+         os := StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
+         for subPath in ["\" A_ComputerName, ""] {
+            path := ".\vda" os subPath "\VirtualDesktopAccessor.dll"
+            if (fileExist(path)) {
+               this.hVDA := DllCall("LoadLibrary", "Str", path, "Ptr")
+               dLog("Loaded vda Library " path)
+               break
+            }
+         }
+
+         ; this.hVDA := DllCall("LoadLibrary", "Str", ".\vda11\VirtualDesktopAccessor_rust.dll", "Ptr")
+
+         this.cbEnabled := 0
+         if (this.hVDA != 0) {
+            this.hvDtCount     := GetProcAddress(this.hVDA, "GetDesktopCount")
+            this.hVDWindow     := GetProcAddress(this.hVDA, "GetWindowDesktopNumber")
+            this.hvIdByWnd     := GetProcAddress(this.hVDA, "GetWindowDesktopId") ; not working on Win10
+            this.hVDCurrent    := GetProcAddress(this.hVDA, "GetCurrentDesktopNumber")
+            this.hvGoToDT      := GetProcAddress(this.hVDA, "GoToDesktopNumber")
+            this.hVDIsCurrent  := GetProcAddress(this.hVDA, "IsWindowOnCurrentVirtualDesktop")
+            this.hVIsPinned    := GetProcAddress(this.hVDA, "IsPinnedWindow")
+            this.hVPinWin      := GetProcAddress(this.hVDA, "PinWindow")
+            this.hVUnPinWin    := GetProcAddress(this.hVDA, "UnPinWindow")
+            this.hVMoveDesktop := GetProcAddress(this.hVDA, "MoveWindowToDesktopNumber")
+            this.hvRestart     := GetProcAddress(this.hVDA, "RestartVirtualDesktopAccessor")
+            this.hvRegHookProc := GetProcAddress(this.hVDA, "RegisterPostMessageHook")
+            this.UnRegHookProc := GetProcAddress(this.hVDA, "UnregisterPostMessageHook")
+
+            MsgNum := DllCall("RegisterWindowMessage", "Str", "TaskbarCreated")
+            dLog("TaskbarCreated Message=" hex(MsgNum))
+            OnMessage(MsgNum, this.OnExplorerRestart.Bind(this))
+
+         } else {
+            MsgBox("Error loading VirtualDesktopAccessor", "DLL Load Error", 0x30)
+         }
+      } catch as err {
+         elog(err)
+         MsgBox("Error loading VirtualDesktopAccessor:" err.Message, "DLL Load Error", 0x30)
+      }
+      ; save the desktop names in this instance
+      this.dtNames := this.deskTopNames
+      this.currentDesktop := 0 
+   }
+   ;----------------------------------------------------------------------------
+   ; Clean up
+   ;----------------------------------------------------------------------------
+   static __delete() {
+      DllCall("FreeLibrary", "Ptr", this.hVDA)
+   }
+   ;----------------------------------------------------------------------------
+   ; Register user function to monitor desktop changes
+   ;----------------------------------------------------------------------------
+   static registerDTMonitor(cb) {
+      ; Hook desktop changes to user callback
+      static messNum := 0x1400 + 30
+      DllCall(this.hvRegHookProc, "Int", A_ScriptHwnd, "Int", messNum)
+      OnMessage(messNum, cb, 1)
+      this.cbEnabled := 1
+   }
+   ;----------------------------------------------------------------------------
+   ; UnRegister user function to monitor desktop changes
+   ;----------------------------------------------------------------------------
+   Static UnregisterDTMonitor(cb) {
+      static messNum := 0x1400 + 30
+      if (this.cbEnabled) {
+         OnMessage(messNum, cb, 0)
+         DllCall(this.UnRegHookProc, "Ptr", A_ScriptHwnd)
+         this.cbEnabled := 0
+         dLog("Unregistered Destktop Monitor")
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Restart the accessor if the taskbar restarts
+   ; On Windows 10, the taskbar also broadcasts this message when the DPI of the primary display changes.
+   ; https://docs.microsoft.com/en-us/windows/win32/shell/taskbar?redirectedfrom=MSDN#taskbar-creation-notification
+   ;----------------------------------------------------------------------------
+   static OnExplorerRestart(wParam, lParam, msg, hwnd) {
+      result := 0
+      dlog("Restarting Desktop Accessor DLL")
+      DllCall(this.hvRestart, "Uint", result)
+   }
+   ;----------------------------------------------------------------------------
+   ; Virtual Desktop Accessor Helpers
+   ;----------------------------------------------------------------------------
+
+   /*
+   typedef struct _GUID {
+   unsigned long  Data1;
+   unsigned short Data2;
+   unsigned short Data3;
+   unsigned char  Data4[8];
+   } GUID;
+   ; Is this an example on how to do it?
+   class lldiv_t {
+      quot : i64, rem : i64
+   }
+   res := DllCall("ucrtbase\lldiv", "int64", 31558149, "int64", 3600, lldiv_t)
+   MsgBox Format("Earth orbit: {} hours and {} seconds.", res.quot, res.rem)
+
+   */
+   ;Gets the identifier for the virtual desktop hosting the provided top-level window.
+   ; BUG - not sure this works, supposed to return in the 128bit UI
+   ; If I can get it to work it should flag invalid windows on alternate desktops
+   static DtGUIID(hWnd) {
+      try {
+         ; guiID := 0
+         guiID := Buffer(16,0xEE)
+         ; status := DllCall(this.hvIdByWnd, "Ptr", hWnd, "ptr", guiID.Ptr, "Int")
+         status := DllCall(this.hvIdByWnd, "Ptr", hWnd)
+         ; if (guiID) {
+         ;    stGuiID := StrGet(guiID)
+         ;    return stGuiID
+         ; } else {
+         ;    warning("Did not find a GUIID for " hex(hWnd))
+         ; }
+         ; guiID := DllCall(this.hvIdByWnd, "Ptr", hWnd, "Ptr")
+         ; debug("status:" status)
+         ; return numget(guiID,0,"Uint")
+      } catch as err {
+         elog(err)
+         return -1
+      }
+   }
+   ; Get ID of some desktop that window is on
+   ; BUG - what is returned for an invalid desktop 0?
+   static DtID(hWnd) {
+      try {
+         dt := DllCall(this.hVDWindow, "Ptr", hWnd, "Int")
+         return dt >= 0 ? dt : 0
+      } catch as err {
+         elog(err)
+         return -1
+      }
+   }
+   ; Is window pinned/locked across all desktops
+   static DtIsPinned(hWnd) {
+      try {
+         return DllCall(this.hVIsPinned, "Ptr", hWnd, "Int")
+      } catch as err {
+         elog(err)
+         return -1
+      }
+   }
+   ; Pin window on all desktops
+   static DtPinWin(hWnd) {
+      try {
+         return DllCall(this.hVPinWin, "Ptr", hWnd, "Uint")
+      } catch as err {
+         elog(err)
+         return 0
+      }
+   }
+   ; UnPin on all desktops
+   static DtUnPinWin(hWnd) {
+      try {
+         return DllCall(this.hVUnPinWin, "Ptr", hWnd, "Uint")
+      } catch as err {
+         elog(err)
+         return 0
+      }
+   }
+   ; Move to some desktop
+   static DtMoveDt(hWnd, dtNum) {
+      try {
+         return DllCall(this.hVMoveDesktop, "Ptr", hWnd, "Uint", dtNum, "Int")
+      } catch as err {
+         elog(err)
+         return 0
+      }
+   }
+   ; Go to some specific 0 based desktop, return of 0 is success
+   static DtGoTo(num) {
+      try {
+      ; TODO : WinActivate taskbar before switching and WinMinimize taskbar after arriving
+         ; Try WinActivate("ahk_group TaskBar")
+         res := DllCall(this.hvGoToDT, "Uint", num, "Int")
+         ; Try WinMinimize("ahk_group TaskBar")
+         return res
+      } catch as err {
+         elog(err)
+         return 0
+      }
+   }
+   ; Is a window on the current desktop
+   static DtOnCurrent(hWnd) {
+      try {
+         return DllCall(this.hVDIsCurrent, "Ptr", hWnd, "Uint")
+      } catch as err {
+         elog(err)
+         return 1
+      }
+   }
+   static DtNext(wrap := 0) {
+      tdt := DllCall(this.hvDtCount, "Ptr", 0, "Uint") - 1
+      cdt := DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
+      if (cdt < tdt) {
+         return cdt + 1
+      } else {
+         if (wrap) {
+            return 0
+         } else {
+            return -1
+         }
+      }
+   }
+   ; Go to the next desktop (0 based)
+   static DtNextDesktop(wrap := 0) {
+      tdt := DllCall(this.hvDtCount, "Ptr", 0, "Uint") - 1
+      cdt := DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
+      if (cdt < tdt) {
+         this.DtGoTo(cdt + 1)
+      } else {
+         if (wrap) {
+            this.DtGoTo(0)
+         } else {
+            SoundBeep(400),debug("Failed for DtNextDesktop")
+         }
+      }
+   }
+   ;
+   ; Go to the previous desktop (0 based)
+   ;
+   static DtPrevDesktop(wrap := 0) {
+      cdt := DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
+      if (cdt > 0) {
+         this.DtGoTo(cdt-1)
+      } else {
+         if (wrap) {
+            tdt := DllCall(this.hvDtCount, "Ptr", 0, "Uint") - 1
+            this.DtGoTo(tdt)
+         } else {
+            SoundBeep(400),debug("Failed for DtPrevDesktop")
+         }
+      }
+   }
+   ; Properties
+   static DtName[dtNum] {
+      get {
+         try {
+            return this.dtNames[dtNum]
+         } catch as err {
+            this.dtNames := this.deskTopNames
+            try {
+               return this.dtNames[dtNum]
+            } catch as err {
+               elog(err)
+            }
+            return "Unknown Name for " dtNum
+         }
+      }
+   }
+   ; Total desktop count
+   static DtCount {
+      get {
+         try {
+            ; max 10 desktops
+            return min(DllCall(this.hvDtCount, "Ptr", 0, "Uint"), 10)
+         } catch as err {
+            elog(err)
+            return 1
+         }
+      }
+   }
+   ; Current desktop handle
+   static DtCurrent {
+      get {
+         try {
+            return DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
+         } catch as err {
+            elog(err)
+            return 0
+         }
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Return an ordered list of desktop names (including custom names)
+   ; There doesn't seem to be a way to get this through an API
+   ;----------------------------------------------------------------------------
+   static deskTopNames {
+      get {
+         static toMap := [7, 8, 5, 6, 3, 4, 1, 2, 11, 12, 9, 10, 15, 16, 13, 14, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+         static IdLength := 32
+         ; Location of the keys for the named desktops
+         static dtNameKey := "HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops"
+         results := map()
+         ;----------------------------------------------------------------------------
+         ; Grab the value for the VirtualDesktopIDs and split it up into 32 byte lengths
+         ; Can also know how many desktops there are and the order they are in
+         ; Will need to unscramble the VirtualDesktopIDs to create the UUID
+         ;----------------------------------------------------------------------------
+         ; D9 54 DC 65 - 0C C1 - 04 43 - 9A 25 - 8B6C97748963 -> {65DC54D9-C10C-4304-9A25-8B6C97748963}
+         ;  <->
+         ;----------------------------------------------------------------------------
+
+         VirtualDesktopIDs := RegRead("HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops", "VirtualDesktopIDs")
+         ; Loop over each desktop
+         loop StrLen(VirtualDesktopIDs) / IdLength {
+            ;        AB7A9AAB8513D346907E AF048FA8AC9A C4E09BD1B9E18F4FA949 C53B0E6CC22F D954DC650CC104439A25 8B6C97748963
+            ;                             ____________                      ____________                      ____________
+            i := A_Index - 1
+            Offset := (i * IdLength) + 1
+            subSection := SubStr(VirtualDesktopIDs, Offset, IdLength)
+            uuid := "\{"
+            ; Build up the key to lookup for named desktops
+            Loop IdLength {
+               uuid .= SubStr(subSection, toMap[A_Index], 1)
+               Switch A_Index, 1 {
+                  Case 8, 12, 16, 20:
+                     uuid .= "-"
+               }
+            }
+            uuid .= "}"
+            /*
+               Try and read the built up key of the "named" desktop, if it exists
+               then pull the name. Default to generic Desktop count
+             */
+            results[i] := RegRead(dtNameKey . uuid, "Name", "Desktop " A_Index)
+         }
+         return results
+      }
+   }
+      ;-------------------------------------------------------------------------------
+   ; Move a window to the current desktop if needed
+   ;-------------------------------------------------------------------------------
+   Static MoveWinToThisDesktop(ownerWin) {
+      cmon := vda.DtCurrent
+      ; First move offdesktop windows to this desktop (same monitor)
+      how := (cmon != vda.DtID(ownerWin))
+      If (how) {
+         vda.DtMoveDt(ownerWin, cmon)
+      }
+      Return how
+   }
+}
+dlog("Include File Loaded")

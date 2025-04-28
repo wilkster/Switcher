@@ -1,0 +1,717 @@
+;----------------------------------------------------------------------------
+; DLL Factory, wrap system DLL calls
+;----------------------------------------------------------------------------
+#Requires AutoHotkey v2.0 
+#Include Structures.ahk2
+#Include Constants.ahk2
+; #Include vda.ahk2
+;----------------------------------------------------------------------------
+; Wrapper for buffer used in DLL Calls
+; Passing a 1 as second parameters loads up the buffer length at offset 0
+;----------------------------------------------------------------------------
+; Align with user setting for dark mode
+; Call this before posting menus to get dark mode for this
+; https://www.autohotkey.com/boards/viewtopic.php?t=94661
+; https://github.com/ysc3839/win32-darkmode/blob/cc26549b65b25d6f3168a80238792545bd401271/win32-darkmode/DarkMode.h#L99
+; https://gist.github.com/rounk-ctrl/b04e5622e30e0d62956870d5c22b7017
+;----------------------------------------------------------------------------
+alignWithDarkMode() {
+   Val := RegRead("HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 1)
+   If (Val = 0) {
+      uxtheme := DllCall("GetModuleHandle", "str", "uxtheme", "ptr")
+      ; fnShouldAppsUseDarkMode  := GetProcAddress(uxtheme, 132)	; ordinal =132
+      ; AllowDarkModeForWindow := GetProcAddress(uxtheme, 133)	; ordinal =133
+      SetPreferredAppMode := GetProcAddress(uxtheme, 135)	; ordinal =135 in 1903+
+      FlushMenuThemes := GetProcAddress(uxtheme, 136)	; ordinal = 136
+
+      ; This is for menus
+      ;0=Default  1=AllowDark  2=ForceDark  3=ForceLight  4=Max
+      DllCall(SetPreferredAppMode, "int", 1)	; Allow Dark
+      DllCall(FlushMenuThemes)
+
+      ; Below isn't necessary, only used for treeview controls and may not apply any more
+      ;DllCall("uxtheme\SetWindowTheme", "ptr", A_ScriptHwnd, "str", "DarkMode_Explorer", "ptr", 0)
+
+      ; DllCall("FreeLibrary", "Ptr", uxtheme) ; if ustheme was loaded
+   }
+}
+;----------------------------------------------------------------------
+; Unused, supposed to set dark mode and such but causes vertical lines on listview
+;----------------------------------------------------------------------
+SetExplorerTheme(ctrlHwnd, WindowTheme := "Explorer") {
+   If (DllCall("GetVersion", "UChar") > 5) {
+      VarSetStrCapacity(&ClassName, 1024)
+      If (DllCall("user32\GetClassName", "Ptr", ctrlHwnd, "Str", ClassName, "Int", 512, "Int")) {
+         If (ClassName = "SysListView32") || (ClassName = "SysTreeView32")
+            Return !DllCall("uxtheme\SetWindowTheme", "Ptr", ctrlHwnd, "Str", WindowTheme, "Ptr", 0)
+      }
+   }
+   Return false
+}
+;----------------------------------------------------------------------------
+; DLL Wrappers
+; GetProcAddress Return the address of either an ordinal or a function
+; Requires the loaded handle of the DLL
+;----------------------------------------------------------------------------
+GetProcAddress(hDLL, strModule) {
+   If (IsInteger(strModule)) {
+      ; The function's ordinal value
+      Return DllCall("Kernel32.dll\GetProcAddress", "Ptr", hDLL, "Ptr", strModule, "Ptr")
+   } Else {
+      ; The function or variable name (convert to ansi string)
+      Return DllCall("Kernel32.dll\GetProcAddress", "Ptr", hDLL, "AStr", strModule, "Ptr")
+   }
+}
+GetLastError() => DllCall("kernel32.dll\GetLastError")
+;----------------------------------------------------------------------
+; Return the Module handle but uses a standard non-loadable dll (like user32)
+;----------------------------------------------------------------------
+; TODO - requires the DLL to be already loaded, implement this
+GetModHandle(strModule, strDLL) => 
+   DllCall("GetProcAddress", "PTR", DllCall("GetModuleHandle", "Str", strDLL, "PTR"), "AStr", strModule, "PTR")
+
+;----------------------------------------------------------------------------
+; User32 Clipboard Related
+;----------------------------------------------------------------------------
+;----------------------------------------------------------------------------
+; dllCall Open Clipboard
+;----------------------------------------------------------------------------
+OpenClipboard(hWnd := 0) => DllCall("User32.dll\OpenClipboard", "Ptr", hWnd, "Int")
+;----------------------------------------------------------------------------
+; dllCall Close Clipboard
+;----------------------------------------------------------------------------
+CloseClipboard() => DllCall("User32.dll\CloseClipboard")
+;----------------------------------------------------------------------------
+; dllCall Empty Clipboard
+;----------------------------------------------------------------------------
+EmptyClipboard() => DllCall("User32.dll\EmptyClipboard")
+;----------------------------------------------------------------------------
+; dllCall Get Clipboard Data in specified format
+;----------------------------------------------------------------------------
+GetClipboardData(clipFormat) => DllCall("User32.dll\GetClipboardData", "UInt", clipFormat)
+;----------------------------------------------------------------------------
+; dllCall Set Clipboard data via memory pointer in specified format
+;----------------------------------------------------------------------------
+SetClipboardData(clipFormat, hMem) => DllCall("User32.dll\SetClipboardData", "UInt", clipFormat, "Ptr", hMem)
+;----------------------------------------------------------------------------
+; dllCall Registor Clipboard Format
+;----------------------------------------------------------------------------
+RegisterClipboardFormat(clipFormat) => DllCall("User32.dll\RegisterClipboardFormatW", "Ptr", StrPtr(clipFormat))
+;----------------------------------------------------------------------------
+; dllCall Check if Clipboard format is available
+;----------------------------------------------------------------------------
+IsClipboardFormatAvailable(ClipFormatHtml) => DllCall("User32.dll\IsClipboardFormatAvailable", "Ptr", ClipFormatHtml)
+;----------------------------------------------------------------------------
+; dllCall get Open Clipboard Window (if any)
+;----------------------------------------------------------------------------
+GetOpenClipboardWindow() => DllCall("User32.dll\GetOpenClipboardWindow", "Ptr")
+GetClipboardViewer() => DllCall("User32.dll\GetClipboardViewer","Ptr")
+
+
+;----------------------------------------------------------------------------
+; User32 Window related
+; TODO: Create myWin class to group these static methods
+;----------------------------------------------------------------------------
+;https://github.com/thqby/ahk2_lib/blob/master/WinAPI/User32.ahk
+SendMessageCallback(hWnd, Msg, wParam, lParam, lpCallBack, dwData) =>
+   DllCall('User32\SendMessageCallback', 'ptr', hWnd, 'uint', Msg, 'uptr', wParam, 'uptr', lParam, 'ptr', lpCallBack, 'uptr', dwData, 'int')
+SendMessageTimeout(hWnd, Msg, wParam, lParam, fuFlags, uTimeout, lpdwResult) =>
+   DllCall('User32\SendMessageTimeout', 'ptr', hWnd, 'uint', Msg, 'uptr', wParam, 'uptr', lParam, 'uint', fuFlags, 'uint', uTimeout, 'uptr*', lpdwResult, 'ptr')
+; SendMessageA(hWnd, Msg, wParam, lParam) => DllCall('User32\SendMessageA', 'ptr', hWnd, 'uint', Msg, 'uptr', wParam, 'uptr', lParam, 'ptr')
+; SendMessageW(hWnd, Msg, wParam, lParam) => DllCall('User32\SendMessageW', 'ptr', hWnd, 'uint', Msg, 'uptr', wParam, 'uptr', lParam, 'ptr')
+; SendMessage_(hWnd, Msg, wParam, lParam) => DllCall('User32\SendMessage_', 'ptr', hWnd, 'uint', Msg, 'uptr', wParam, 'uptr', lParam, 'ptr')
+/*
+   WaitForInputIdle can be used at any time, not just during application startup. However, WaitForInputIdle waits 
+   only once for a process to become idle; subsequent WaitForInputIdle calls return immediately, 
+   whether the process is idle or busy.
+   So only useful on startup
+*/
+WaitForInputIdle(hWnd, to) {
+
+   ProcessId := WinGetPID(hWnd)
+   If (!(hProcess := DllCall("Kernel32.dll\OpenProcess", "UInt", 0x0400, "Int", false, "UInt", ProcessId, "Ptr"))) {
+      Return "OpenProcess ERROR"
+   }
+   res := DllCall("WaitForInputIdle", "Ptr", hProcess, "Uint", to, "Int")
+   DllCall("Kernel32.dll\CloseHandle", "Ptr", hProcess)
+   Return res
+}
+
+;----------------------------------------------------------------------------
+; Set the system cursor for resizing and moving
+; https://www.autohotkey.com/boards/viewtopic.php?t=13284
+; https://www.autohotkey.com/boards/viewtopic.php?t=75867
+;----------------------------------------------------------------------------
+SetSystemCursor(Cursor := "") {
+   Static Cursors := [32650, 32512, 32515, 32649, 32651, 32513, 32648, 32646, 32643, 32645, 32642, 32644, 32516, 32514]
+   Static SPI_SETCURSORS := 0x57
+   Static LR_SHARED := 0x8000
+   Static U := "Uint"
+   Static I := "Int"
+   Static P := "Ptr"
+   ; APPSTARTING: 32650, ARROW: 32512, CROSS: 32515, HAND: 32649, HELP: 32651, IBEAM: 32513, NO: 32648, ;
+   ; SIZEALL: 32646, SIZENESW: 32643, SIZENS: 32645, SIZENWSE: 32642, SIZEWE: 32644, UPARROW: 32516, WAIT: 32514
+   ; The line of code below loads a cursor from the system set
+   If (Cursor == "") {
+      ; Restore system cursor
+      DllCall("User32.dll\SystemParametersInfoW"
+         , U, SPI_SETCURSORS
+         , U, 0
+         , P, 0
+         , U, 0
+      )
+   } Else {
+      ; LoadCursor is superseded, use LoadImage instead
+      ; When loading a system icon or cursor, you must use LR_SHARED (0x8000) or the function will fail to load the resourc
+      hCursor := DllCall("User32.dll\LoadImage", U, 0, U, Cursor, U, 2, U, 0, U, 0, U, LR_SHARED)
+      ; And than we set all the default system cursors to be our choosen cursor.
+      ; CopyImage is necessary as SetSystemCursor destroys the cursor we pass to it after using it.
+      For v in Cursors {
+         DllCall("User32.dll\SetSystemCursor", U,
+            DllCall("User32.dll\CopyImage", U, hCursor, U, 2, I, 0, I, 0, U, 0),
+            U, v)
+      }
+   }
+}
+;----------------------------------------------------------------------
+; Return true if cursor is in top left corner of monitor 0,0
+;----------------------------------------------------------------------
+CursorInCorner() {
+   Static GetCursorPos := GetModHandle("GetCursorPos", "User32.dll")
+   DllCall(GetCursorPos, "UInt64*", &POINT := 0)
+   Return POINT = 0
+}
+;----------------------------------------------------------------------
+; https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-nchittest
+; Return the position of the cursor in the window under the cusror
+; Untested
+;----------------------------------------------------------------------
+CursorTest() {
+   CoordMode("Mouse", "Screen")
+   MouseGetPos(&mx0, &my0, &hWnd)
+   Return SendMessage(WM_NCHITTEST, 0, (mx0 & 0xFFFF) | (my0 & 0xFFFF) << 16, , hWnd)
+}
+
+;----------------------------------------------------------------------
+; This is the same as WinGetPID for some handle
+; Retrieves the identifier of the thread that created the specified window
+; and, optionally, the identifier of the process that created the window.
+;----------------------------------------------------------------------
+GetWindowThreadProcessId(hWnd) {
+   tid := DllCall("GetWindowThreadProcessId", "Ptr", hWnd, "int*", &pid := 0)
+   Return pid
+}
+;----------------------------------------------------------------------
+; Get the window that has the focus (vs the parent)
+;----------------------------------------------------------------------
+getFocusWindow(hWnd) {
+   st := stGUITHREADINFO()
+   p := DllCall("GetWindowThreadProcessId", "Ptr", hWnd, "int*", &pid := 0)
+   If DllCall("GetGUIThreadInfo", "Uint", p, "Ptr", st) {
+      Return st.hwndFocus
+   } Else {
+      Warning("GetGUIThreadInfo " A_LastError)
+      Return hWnd
+   }
+}
+;----------------------------------------------------------------------
+; Self Destructing Tooltip class
+; TODO - keep track of instances 1-20
+; TODO - can we make a custom one with colored text/backgrounds and icons?
+;----------------------------------------------------------------------
+; CLass ttClass {
+;    Static Counter := 0
+;    Static TTM_SETTITLE := 0x421
+;    Static TTI_INFO := 1
+;    __New(txt, timeout:=1000) {
+;       this.id := ++ttClass.Counter
+;       this.hWnd := ToolTip(txt)
+
+;       ; May have to temporarrly disable visual styles
+;       ; SendMessage(ttClass.TTM_SETTITLE,ttClass.TTI_INFO,StrPtr("Info"),,this.hWnd)
+;       ; DllCall("SendMessage", "Ptr", this.hWnd, "Int", ttClass.TTM_SETTITLE,"Int", ttClass.TTI_INFO, "Ptr", StrPtr("Info"))
+;       ; Self destruct
+;       SetTimer(this.Remove.Bind(this),-timeout)
+;    }
+;    Remove() {
+;       ToolTip()
+;       ttClass.Counter--
+;       this := unset
+;    }
+; }
+;----------------------------------------------------------------------
+; Return some system color N
+; BUG - Limited applicability to Windows 10+ (supposed to return RGB not BGR)
+;----------------------------------------------------------------------
+; GetSysColor(n) {
+;    Local BGR := DllCall("User32.dll\GetSysColor", "Int", n, "UInt")
+;        , RGB := (BGR & 255) << 16 | (BGR & 65280) | (BGR >> 16)
+;    Return Format("0x{:06X}", RGB)
+; }
+;----------------------------------------------------------------------------
+; GDI Stuff
+;----------------------------------------------------------------------------
+Class myGDI {
+   #DllLoad "Gdi32.dll"
+
+   ;------------------------------------------------------
+   ; The FrameRgn function draws a border around the specified region by using the specified brush.
+   ;------------------------------------------------------
+   Static FrameRgn(HDC, HRGN, HBrush, Width, Height) {
+      Return DllCall("Gdi32.dll\FrameRgn", "Ptr", HDC, "Ptr", HRGN, "Ptr", HBrush, "UInt", Width, "Uint", Height, "Int")
+   }
+   ;----------------------------------------------------------------------
+   ; The CreateRoundRectRgn function creates a rectangular region with rounded corners.
+   ;----------------------------------------------------------------------
+   Static CreateRoundRectRgn(Left, Top, Right, Bottom, RX, RY) {
+      Return DllCall("Gdi32.dll\CreateRoundRectRgn", "Int", Left, "Int", Top, "Int", Right, "Int", Bottom, "Int", RX, "Int", RY, "UPtr")
+   }
+   ;----------------------------------------------------------------------
+   ; Create a rectangular region
+   ;----------------------------------------------------------------------
+   Static CreateRectRgn(Left, Top, Right, Bottom) {
+      Return DllCall("Gdi32.dll\CreateRectRgn", "Int", Left, "Int", Top, "Int", Right, "Int", Bottom, "UPtr")
+   }
+   ; The SelectClipRgn function selects a region as the current clipping region for the specified device context.
+   Static SelectClipRgn(HDC, hrgn) => DllCall("Gdi32.dll\SelectClipRgn", "Ptr", HDC, "Ptr", hrgn, "Int")
+   ;----------------------------------------------------------------------
+   ; Delete a gdi object, optionally with a debug message if failed
+   ;----------------------------------------------------------------------
+   Static DeleteObject(p_object, desc := "") {
+      res := DllCall("Gdi32.dll\DeleteObject", "Ptr", p_object, "Int")
+      If (res = 0)
+         warning("Failed to delete object " desc " " p_object)
+      Return res
+   }
+   ;----------------------------------------------------------------------
+   ; The FillRgn function fills a region by using the specified brush.
+   ;----------------------------------------------------------------------
+   Static GetBkColor(hdc) => DllCall("Gdi32.dll\GetBkColor", "Ptr", hdc, "uint")
+   Static FillRgn(hdc, rgnMain, hBrush) => DllCall("Gdi32.dll\FillRgn", "Ptr", hdc, "Ptr", rgnMain, "Ptr", hBrush)
+   Static CreateSolidBrush(rgbColor) => DllCall("Gdi32.dll\CreateSolidBrush", "uint", rgbColor)
+   Static GetSysColorBrush(index) => DllCall("User32.dll\GetSysColorBrush", "uint", index)
+   Static CreateSolidPen(Width, Color) => DllCall("Gdi32\CreatePen", "Uint", 0, "Uint", Width, "Uint", Color)
+   Static FillRect(hdc, pRect, hBrush) => DllCall("User32\FillRect", "Ptr", hdc, "ptr", pRect, "Ptr", hBrush, "Int")
+   ; TODO - https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createfontw
+   Static SelectObject(hDC, hObject) => DllCall("SelectObject", "Ptr", hDC, "Ptr", hObject)
+   Static GetTempWindowRgn(hWnd, &hRgnNew) {
+      hRgn := myGDI.CreateRectRgn(0, 0, 0, 0)
+      ; The GetWindowRgn function obtains a copy of the window region of a window
+      Result := myGDI.GetWindowRgn(hWnd, hRgn)
+      hRgnNew := Result ? hRgn : 0
+      Return Result
+   }
+   Static GetWindowRgn(hWnd, hRgn) => DllCall("User32.dll\GetWindowRgn", "Ptr", hWnd, "Ptr", hRgn, "Int")
+   ;----------------------------------------------------------------------
+   ; Set the window to only show the specified region, tranasparent otherwise
+   ;----------------------------------------------------------------------
+   Static SetWindowRgn(HWND, HRGN, Redraw := true) {
+      Return DllCall("User32.dll\SetWindowRgn", "Ptr", HWND, "Ptr", HRGN, "UInt", !!Redraw, "Int")
+   }
+
+   Static DeleteDC(p_dc) => DllCall("User32.dll\DeleteDC", "uint", p_dc)
+   Static GetDC(HWND) => DllCall("User32.dll\GetDC", "Ptr", HWND)
+   Static GetWindowDC(HWND) => DllCall("User32.dll\GetWindowDC", "Ptr", HWND)
+   Static ReleaseDC(HWND, HDC) => DllCall("User32.dll\ReleaseDC", "Ptr", HWND, "Ptr", HDC)
+   /*
+      stHFONT._pszFaceName=148123348
+      stHFONT.bItalic=0
+      stHFONT.bStrikeOut=0
+      stHFONT.bUnderline=0
+      stHFONT.cEscapement=0
+      stHFONT.cHeight=-32
+      stHFONT.cOrientation=0
+      stHFONT.cWeight=400
+      stHFONT.cWidth=0
+      stHFONT.iCharSet=1
+      stHFONT.iClipPrecision=0
+      stHFONT.iOutPrecision=4
+      stHFONT.iPitchAndFamily=0
+      stHFONT.iQuality=0
+      stHFONT.pszFaceName=Segoe UI Symbol
+   */
+
+   Static CreateFont(Face, Height := 0, Weight := 400) {
+      Return DllCall("Gdi32\CreateFont"
+         , "Int", Height 	; _In_ int       	  nHeight, in logical units also known as the em height
+         , "Int", 0         	; _In_ int       	  nWidth,
+         , "Int", 0        	; _In_ int       	  nEscapement,
+         , "Int", 0        	; _In_ int       	  nOrientation,
+         , "Int", Weight ; _In_ int        	  fnWeight, 
+         , "UInt", 0     	; _In_ DWORD   fdwItalic,
+         , "UInt", 0     	; _In_ DWORD   fdwUnderline,
+         , "UInt", 0     	; _In_ DWORD   fdwStrikeOut,
+         , "UInt", 0     	; _In_ DWORD   fdwCharSet, (ANSI_CHARSET)
+         , "UInt", 0     	; _In_ DWORD   fdwOutputPrecision, (OUT_DEFAULT_PRECIS)
+         , "UInt", 0     	; _In_ DWORD   fdwClipPrecision, (CLIP_DEFAULT_PRECIS)
+         , "UInt", 0     	; _In_ DWORD   fdwQuality, (DEFAULT_QUALITY)
+         , "UInt", 0     	; _In_ DWORD   fdwPitchAndFamily, (FF_DONTCARE|DEFAULT_PITCH)
+         , "Str", Face   	; _In_ LPCTSTR  lpszFace typeface name of the font (32 char max)
+         , "UPtr")
+   }
+   /**
+    * Return the associated font structure for a control
+    * @param handle to control
+    * @param HFONT structure
+    * @returns Font Object 
+    */
+   Static getDefaultFont(hWnd, cFont) {
+      Static WM_GETFONT        := 0x0031
+      defFont := SendMessage(WM_GETFONT, 0,,,hWnd)
+      DllCall("Gdi32\GetObject", "Ptr", defFont, "Int", cFont.Size, "Ptr", cFont.Ptr)
+      return defFont
+   }
+   /**
+    * Create a font from a populated HFONT structure
+    * @param HFONT structure
+    * @returns Font Object 
+    */
+   Static CreateFontIndirect(cFont) {
+      return DllCall("Gdi32\CreateFontIndirect","Ptr", cFont.Ptr)
+   }
+}
+
+
+
+/*
+An em is equal to the current font-size, for instance, if the font-size of the document 
+is 12pt, 1em is equal to 12pt. Ems are scalable in nature, so 2em would equal 24pt, . 
+5em would equal 6pt, etc.. Percent (%): The percent unit is much like the “em” unit, 
+save for a few fundamental differences
+*/
+;----------------------------------------------------------------------
+; User32 related to GDI
+;----------------------------------------------------------------------
+; ================================================================================================================================
+; Combine a temp zero size rectangele and pass into GetWindowRgn along with the handle to allow
+; A window region to be modified after it is "set"
+; ================================================================================================================================
+
+;----------------------------------------------------------------------------
+; Kernel32
+;----------------------------------------------------------------------------
+GlobalAlloc(uFlags, dwBytes) => DllCall("Kernel32.dll\GlobalAlloc", "UInt", uFlags, "Ptr", dwBytes)
+GlobalLock(hMem) => DllCall("Kernel32.dll\GlobalLock", "Ptr", hMem)
+GlobalUnlock(hMem) => DllCall("Kernel32.dll\GlobalUnlock", "Ptr", hMem)
+GlobalFree(hMem) => DllCall("Kernel32.dll\GlobalFree", "Ptr", hMem)
+QueryPerformanceFrequency(&freq) => DllCall("Kernel32.dll\QueryPerformanceFrequency", "Int64*", &freq)
+QueryPerformanceCounter(&nowt) => DllCall("Kernel32.dll\QueryPerformanceCounter", "Int64*", &nowt)
+
+;----------------------------------------------------------------------------
+; NTDll
+;----------------------------------------------------------------------------
+RtlMoveMemory(pDestination, pSource, Length) => DllCall("Ntdll.dll\RtlMoveMemory", "Ptr", pDestination, "Ptr", pSource, "Ptr", Length)	;Ptr for Length??
+
+
+;============================================================================
+;           Other Common Window Related Functions that don't use DllCall
+;============================================================================
+
+;----------------------------------------------------------------------------
+; Is this a valid Alt-Tab candidate? Works with hidden windows as well.
+;----------------------------------------------------------------------------
+; GroupAdd("InvalidCandidate", "ahk_class Ghost")	; Hung windows
+; GroupAdd("InvalidCandidate", "ahk_class Windows.UI.Core.CoreWindow")	; Releated to start menu/UWP
+; GroupAdd("InvalidCandidate", "ahk_class Windows.UI.Core.AppWindow")	; Releated to start menu/UWP
+; GroupAdd("InvalidCandidate", "ahk_class MS-SDIa")	; Project Child windows that show up as main windows
+; GroupAdd("InvalidCandidate", "ahk_class MS-SDIb")	; Excel Child windows that show up as main windows
+; GroupAdd("InvalidCandidate", "ahk_class IME")	  ; UWP Phantom WIndow
+; GroupAdd("InvalidCandidate", "ahk_class WorkerW")	; UWP Phantom Window
+
+;----------------------------------------------------------------------
+; These are classes of windows to ignore either phantom or UWP Support windows
+; These don't require DetectHiddenWindows to be on
+;----------------------------------------------------------------------
+;----------------------------------------------------------------------------
+; Enable Dark Mode
+; https://docs.microsoft.com/en-us/windows/apps/desktop/modernize/apply-windows-themes
+; This value is supported starting with Windows 11 Build 22000.
+;----------------------------------------------------------------------------
+Dark11Mode(hWnd) {
+   ; This value is supported starting with Windows 11 Build 22000.
+   Static DWMWA_USE_IMMERSIVE_DARK_MODE := (VerCompare(A_OSVersion, "10.0.18985") >= 0) ? 20 : 19
+   Static setBool := 1
+   ; SetWindowTheme(window, L"DarkMode_Explorer", NULL);  can apply this is a list view
+   ; round corners on windows 11, ignored by windows 10
+   ; DWMWA_WINDOW_CORNER_PREFERENCE = 33
+   ; DWMWCP_ROUND=2, 4 = size of int
+   DllCall("dwmapi\DwmSetWindowAttribute"
+      , "Ptr", hWnd
+      , "UInt", DWMWA_USE_IMMERSIVE_DARK_MODE
+      , "Int*", setBool
+      , "UInt", 4)
+}
+
+;----------------------------------------------------------------------
+; Not sure if this works, returns if the session is unlocked or locked
+;----------------------------------------------------------------------
+WorkstationIsUnLocked() => DllCall("User32\OpenInputDesktop", "uint", 0, "uint", false, "int", 0x0001)
+
+;----------------------------------------------------------------------------
+; Return 10 or 11 for windows version
+;----------------------------------------------------------------------------
+OSVersion() => StrSplit(A_OSVersion, ".")[3] < 22000 ? 10 : 11
+; WinVersion() => StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
+
+/*----------------------------------------------------------------------------\
+ Force the computer to sleep
+ This can more easily be done with a com object
+\----------------------------------------------------------------------------*/
+; StandBy() {
+;    ;enable SeShutdownPrivilege token
+;    Static SE_PRIVILEGE_ENABLED := 2
+;    PID := ProcessExist()
+;    ; Get the handle of this script with PROCESS_QUERY_INFORMATION (0x0400):
+;    hProcess := DllCall("OpenProcess", "UInt", 0x0400, "Int", false, "UInt", PID, "Ptr")
+;    ; Open an adjustable access token with this process (TOKEN_ADJUST_PRIVILEGES = 32):
+;    DllCall("Advapi32.dll\OpenProcessToken", "Ptr", hProcess, "UInt", 32, "Ptr*", &tProcess := 0)
+;    ; VarSetCapacity(ti, 16, 0)  ; structure of privileges
+;    privBuffer := Buffer(16, 0)  ; structure of privileges
+;    NumPut("UInt", 1, privBuffer, 0)  ; one entry in the privileges array...
+;    ; Retrieves the locally unique identifier of the privilege:
+;    DllCall("Advapi32.dll\LookupPrivilegeValue", "Ptr", 0, "Str", "SeShutdownPrivilege", "Int64*", &privVal := 0)
+;    NumPut("Int64", privVal, privBuffer, 4)
+;    NumPut("UInt", SE_PRIVILEGE_ENABLED, privBuffer, 12)  ; Enable this privilege: SE_PRIVILEGE_ENABLED = 2
+;    ; Update the privileges of this process with the new access token:
+;    r := DllCall("Advapi32.dll\AdjustTokenPrivileges", "Ptr", tProcess, "Int", false, "Ptr", privBuffer
+;       , "UInt", 0, "Ptr", 0, "Ptr", 0)
+;    DllCall("CloseHandle", "Ptr", tProcess)  ; Close this access token handle to save memory.
+;    DllCall("CloseHandle", "Ptr", hProcess)  ; Close this process handle to save memory.
+
+;    ;PC standby (S3)
+;    DllCall("ntdll\ZwInitiatePowerAction", "Int", 2, "Int", 4, "Int", 0x80000000, "Int", 1)
+; }
+;--------------------------------------------------------------
+; Return compacted RGB word as a text string
+;--------------------------------------------------------------
+RGB(r, g, b) => Format("0x{1:02x}{2:02x}{3:02x}", r, g, b)	; less black
+; Return an RGB text color cFFFFFF style to hex
+colToHex(color) => _cleanRGB(color)
+
+; rgb(r, g, b) => ((r & 0xFF << 16) | (g & 0Xff << 8) | (b & 0xFF))
+;--------------------------------------------------------------
+; Adjust the luminence of a compacted RGB word
+; FFFFFF or cFFFFFF or 0xFFFFFF
+;--------------------------------------------------------------
+lumRGB(rgb, val) {
+   rgb := _cleanRGB(rgb)
+   r := constrain(0, 255, ((rgb >>> 16) & 0xFF) + val)
+   g := constrain(0, 255, ((rgb >>> 8) & 0xFF) + val)
+   b := constrain(0, 255, ((rgb >>> 0) & 0xFF) + val)
+   Return Format("0x{1:02x}{2:02x}{3:02x}", r, g, b)
+}
+;--------------------------------------------------------------
+; RGBColor is expected to be a hex string from PixelGetColor
+; Return the peak color
+;--------------------------------------------------------------
+GetRGB(RGBColor, &Red, &Green, &Blue) {
+   RGBColor := _cleanRGB(RGBColor)
+   Red := (RGBColor >>> 16) & 0xFF			; Calculate Red From Hex Value.
+   Green := (RGBColor >>> 8) & 0xFF			; Calculate Green From Hex Value.
+   Blue := (RGBColor & 0xFF)             ; Blue is lower word
+   return Max(Red,Green,Blue)
+}
+;----------------------------------------------------------------------
+; Provied a clean RBG value in hex (as a number)
+; cFFFFFF, FFFFFF, 0xFFFFFF, 123456
+; Suitable for both AHK colors as well as DLLCALL colors
+;----------------------------------------------------------------------
+_cleanRGB(rgb) {
+   Static cMap := Map("AQUA", "0x00FFFF", "BLACK", "0x000000", "BLUE", "0x0000FF", "FUCHSIA", "0xFF00FF"
+      , "GRAY", "0x808080", "GREEN", "0x008000", "LIME", "0x00FF00", "MAROON", "0x800000"
+      , "NAVY", "0x000080", "OLIVE", "0x808000", "PURPLE", "0x800080", "RED", "0xFF0000"
+      , "SILVER", "0xC0C0C0", "TEAL", "0x008080", "WHITE", "0xFFFFFF", "YELLOW", "0xFFFF00")
+
+   Switch Type(rgb) {
+      Case "Integer":
+         Return rgb
+      Case "String":
+         If (rgb) {
+            Return Integer(cMap.Get(StrUpper(rgb), "0x" SubStr(rgb, -6)))
+         } else
+            Return 0
+      Default:
+   }
+   Return rgb
+}
+;----------------------------------------------------------------------
+; Convert from RGB to BGR
+;----------------------------------------------------------------------
+toBGR(Color, Default := "") { ; converts colors to BGR
+   ; HTML Colors (BGR)
+   Static HTML := { AQUA: 0xFFFF00, BLACK: 0x000000, BLUE: 0xFF0000, FUCHSIA: 0xFF00FF, GRAY: 0x808080, GREEN: 0x008000
+      , LIME: 0x00FF00, MAROON: 0x000080, NAVY: 0x800000, OLIVE: 0x008080, PURPLE: 0x800080, RED: 0x0000FF
+      , SILVER: 0xC0C0C0, TEAL: 0x808000, WHITE: 0xFFFFFF, YELLOW: 0x00FFFF }
+   Switch Type(Color) {
+      Case "Integer":
+         Return ((Color >> 16) & 0xFF) | (Color & 0x00FF00) | ((Color & 0xFF) << 16)
+      Case "String":
+         If (HTML.HasOwnProp(Color))
+            Return HTML.%Color%
+         Else If Color {
+            Color := Integer("0x" SubStr(Color, -6))
+            Return ((Color >> 16) & 0xFF) | (Color & 0x00FF00) | ((Color & 0xFF) << 16)
+         } Else
+            Return ""
+   }
+}
+
+;----------------------------------------------------------------------
+; Convert from RGB to BGR for some internal windows functions
+;----------------------------------------------------------------------
+NormalizePath(path) {
+   cc := DllCall("GetFullPathName", "str", path, "uint", 0, "ptr", 0, "ptr", 0, "uint")
+   buf := Buffer(cc * 2)
+   DllCall("GetFullPathName", "str", path, "uint", cc, "ptr", buf, "ptr", 0)
+   Return StrGet(buf)
+}
+;============================================================================
+; Common routines, used by classes for debugging
+; Debug messages
+;============================================================================
+A_LastFunc() => Error("", -3).what ; Find calling function
+; OutputDebug alias
+debug(stuff) => OutputDebug("(D) AHK2 (" BFN(Error("", -1).File) "⇨" Error("", -2).what " @ " Error("", -1).line ") " stuff)
+; Log debug info to the external debugView
+dlog(stuff) => OutputDebug("(I) AHK2 (" BFN(Error("", -1).File) " @ " Error("", -1).line ") " stuff)
+warning(stuff) => OutputDebug("(W) AHK2 (" Error("", -2).what " @ " Error("", -1).line ") " stuff)
+logError(stuff) => OutputDebug("(E) AHK2 (" Error("", -2).what " @ " Error("", -1).line ") " stuff)
+; Error message with function, line number and call stack
+elog(e, extra := "") {
+   OutputDebug("(E) AHK2 " (extra ? extra " " : "") e.Message ", from " e.What " @ line " e.Line)
+   ; OutputDebug("    AHK2 File " e.file)
+   If (e.extra)
+      OutputDebug(" AHK2 Specifically " e.extra)
+   For line in StrSplit(e.Stack, '`n') {
+      If (line := Trim(line, ' `n'))
+         OutputDebug(" ⇨ (" A_Index ") Stack:" line)
+   }
+   TrayTip
+   TrayTip("AHK Error: " e.Message ", from " e.What " @ line " e.Line ,"Autohotkey Error","Iconx")
+}
+BFN(fpath) {
+   SplitPath(fpath, &fName)
+   Return fName
+}
+; Hex value
+hx(val) => Format("{:#010x}", val)
+; Hex Value
+hex(val) => Format("0x{:X}", val)
+/**
+ * Constrain a value to a min/max
+ * @param l Lower contraint 
+ * @param r Upper contraint 
+ * @param a Actual Value
+ * @returns {number} Constrained Value
+ */
+constrain(l, r, a) => (a > r ? r : (a < l ? l : a))
+MinMax(Num, MinNum, MaxNum) => Min(Max(Num, MinNum), MaxNum)
+;----------------------------------------------------------------------------
+; Popup message briefly
+;----------------------------------------------------------------------------
+ttMsg(Txt, to := 1000) {
+   ToolTip(Txt)
+   SetTimer(ToolTip, to * -1)
+}
+;https://www.autohotkey.com/boards/viewtopic.php?f=83&t=107759
+/*
+for v in Range(10,1)
+    result .= v "`n"
+*/
+;----------------------------------------------------------------------
+; e.g: for v in Range(10,1, -1) {
+;----------------------------------------------------------------------
+Range(Start, Stop, Step := 1) => (&n) => (n := Start, Start += Step, Step > 0 ? n <= Stop : n >= Stop)
+
+
+;----------------------------------------------------------------------
+; Is the same key being held down?
+;----------------------------------------------------------------------
+isMashed(to) {
+   Then := A_TickCount + to
+   While (A_ThisHotkey = A_PriorHotkey) {
+      debug(A_ThisHotkey)
+      If (A_TickCount > Then) {
+         Return true
+      }
+      Sleep(50)
+   }
+   debug("Not Mashed")
+   Return false
+}
+isRepeat(to) => (A_ThisHotkey = A_PriorHotkey) AND (A_TimeSincePriorHotkey < to)
+/**
+ * Ordered map class that maintains the order of items added
+ * @param {number} 
+ * @returns {number} 
+ */
+Class Dict extends Map {
+   __New(KVPairs*) {
+      super.__New(KVPairs*)
+      KeyArray := []
+      keyCount := KVPairs.Length // 2
+      KeyArray.Length := keyCount
+      Loop keyCount
+         KeyArray[A_Index] := KVPairs[(A_Index << 1) - 1]
+      this.KeyArray := KeyArray
+   }
+
+   __Item[key] {
+      set {
+         If !this.Has(key)
+            this.KeyArray.Push(key)
+         super[key] := Value
+      }
+   }
+
+   Clear() {
+      super.Clear()
+      this.KeyArray := []
+   }
+
+   Clone() {
+      Other := super.Clone()
+      Other.KeyArray := this.KeyArray.Clone()
+      Return Other
+   }
+
+   Delete(key) {
+      Try {
+         RemovedValue := super.Delete(key)
+         CaseSense := this.CaseSense
+         For i, Element in this.KeyArray {
+            areSame := (Element is String)
+               ? !StrCompare(Element, key, CaseSense)
+               : (Element = key)
+            If areSame {
+               this.KeyArray.RemoveAt(i)
+               Break
+            }
+         }
+         Return RemovedValue
+      } Catch UnsetItemError As Err
+         throw UnsetItemError(Err.Message, -1, Err.Extra)
+   }
+
+   Set(KVPairs*) {
+      If (KVPairs.Length & 1)
+         throw ValueError('Invalid number of parameters.', -1)
+      KeyArray := this.KeyArray
+      keyCount := KVPairs.Length // 2
+      KeyArray.Capacity += keyCount
+      Loop keyCount {
+         key := KVPairs[(A_Index << 1) - 1]
+         this.Has(key) || KeyArray.Push(key)
+      }
+      super.Set(KVPairs*)
+      Return this
+   }
+
+   __Enum(*) {
+      keyEnum := this.KeyArray.__Enum(1)
+      Return (&key?, &val?) => (
+         keyEnum(&key) ? (val := this[key], true) : false
+      )
+   }
+}
+dlog("Include File Loaded")

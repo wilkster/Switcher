@@ -1,0 +1,831 @@
+/************************************************************************
+ * @description Provides Windows API related Functions
+ * @file WindowFunctions.ahk2
+ * @author Tom Wilkason
+ * @date 2024/02/17
+ * @version 0.0.0
+ ***********************************************************************/
+
+#Requires AutoHotkey v2.0 
+#Include Constants.ahk2
+#Include dllFactory.ahk2
+#Include StopWatch.ahk2
+#Include Monitors.ahk2
+
+; Global IgnoreWindows := Map()
+; IgnoreWindows["Ghost"] := 1
+; IgnoreWindows["Windows.UI.Core.CoreWindow"] := 1
+; IgnoreWindows["Windows.UI.Core.AppWindow"] := 1
+; IgnoreWindows["MS-SDIa"] := 1
+; IgnoreWindows["MS-SDIb"] := 1
+; IgnoreWindows["Ghost"] := 1
+; IgnoreWindows["IME"] := 1
+; IgnoreWindows["WorkerW"] := 1
+; IgnoreWindows["ThumbnailDeviceHelperWnd"] := 1
+; IgnoreWindows["Unknown"] := 1
+; IgnoreWindows["OleMainThreadWndClass"] := 1
+; IgnoreWindows["SysShadow"] := 1
+; IgnoreWindows["CicMarshalWndClass"] := 1
+; IgnoreWindows["Chrome_MessageWindow"] := 1
+; IgnoreWindows["tooltips_class32"] := 1
+
+Global IgnoreWindows := Map(
+     "Ghost", 1
+   , "Windows.UI.Core.CoreWindow", 1
+   , "Windows.UI.Core.AppWindow" , 1
+   , "MS-SDIa", 1
+   , "MS-SDIb", 1
+   , "Ghost", 1
+   , "IME", 1
+   , "WorkerW", 1
+   , "ThumbnailDeviceHelperWnd", 1
+   , "Unknown",1 
+   , "OleMainThreadWndClass", 1 
+   , "SysShadow",1
+   , "CicMarshalWndClass",1
+   , "Chrome_MessageWindow",1
+   , "tooltips_class32",1
+)
+DontIgnore(hWnd) => !IgnoreWindows.Has(getClassName(hWnd))
+
+;----------------------------------------------------------------------------
+; Push and restore transparency for a window when moving it
+; May fail on admin windows with no rights
+;----------------------------------------------------------------------------
+Class transparentWindow {
+   __New(hwnd) {
+      this.tp := WinGetTransparent(hwnd)
+      this.mHwnd := hwnd
+      Try WinSetTransparent(0, this.mHwnd)
+      ; WinSetStyle("-0x10000000",this.mHwnd)
+      ChangeWindowAnimation(hWnd,1)
+   }
+   __Delete() {
+      ChangeWindowAnimation(this.mHwnd,0)
+      ; WinSetStyle("+0x10000000",this.mHwnd)
+      If (this.tp = 255) {
+         Try WinSetTransparent("Off", this.mHwnd)
+      } Else {
+         Try WinSetTransparent(this.tp, this.mHwnd)
+      }
+
+   }
+}
+PingWindow(hWnd, TO := 5000) => SendMessage(0x00, 0, 0, , hWnd, , , , TO)
+PingAWindow(hWnd) {
+   Static WM_EXITSIZEMOVE := 0x0232
+   blockZero := A_TickCount
+   SendMessage(WM_EXITSIZEMOVE, 0, 0, , hWnd, , , , 2000)
+   Return (A_TickCount - blockZero)
+}
+; returns the same handle if window is valid, otherwise 0
+IsWindow(hwndTry) => DllCall("User32.dll\IsWindow", "Ptr", hwndTry)
+IsWindowVisible(hwndTry) => DllCall("User32.dll\IsWindowVisible", "Ptr", hwndTry)
+IsHungAppWindow(hWnd) => DllCall("User32.dll\IsHungAppWindow", "Ptr", hWnd, "Int")
+; returns the real window handle from a ghost handle
+; Ghost windows have a window class of "Ghost". You can get details of their window class by calling GetClassInfoEx(NULL, TEXT("Ghost"), &wndex);
+HungWindowFromGhostWindow(hWnd) => DllCall("User32.dll\HungWindowFromGhostWindow", "Ptr", hWnd, "Ptr")
+; A ghost window replaces a window that hasn't called Get or PeekMessage for 5 seconds, in other words a hung window. It displays a bitmap of the hung window's client area
+GhostWindowFromHungWindow(hWnd) => DllCall("User32.dll\GhostWindowFromHungWindow", "Ptr", hWnd, "Ptr")
+
+
+SetWindowLong(hWnd,opCode, Value) => DllCall("SetWindowLong", "int", hwnd, "int", opCode, "int", Value)
+GetWindowLong(hWnd,opCode) => DllCall("GetWindowLong", "Ptr", hWnd, "Uint", opCode, "Uint")
+
+; Change the owner of a window
+SetOwner(hwnd, newOwner) =>  DllCall("SetWindowLongPtr", "ptr", hwnd, "int", GWL_HWNDPARENT, "ptr", newOwner)
+GetAncestor(thisID, flags) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", flags, "Ptr")
+; Get root owner of a window
+; GAROOTOWNER and GAROOT are both functions in the Win32 API that retrieve the root window by walking the chain of parent windows.
+; The difference between the two is that GA_ROOTOWNER guarantees that the returned value is a top-level window. Only top-level windows can be owners.
+GetRootOwner(thisID) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", GA_ROOTOWNER, "Ptr")
+GetParentOnly(thisID) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", 1, "Ptr")
+; Get the root of a window, may not be a toplevel window (more immediate up the chain than ROOTOWNER)
+GetRoot(thisID) {
+   Try {
+      Return DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", GA_ROOT, "Ptr")
+   } Catch {
+      Return thisID
+   }
+}
+; Returns the parent window
+GetParent(hWnd) => DllCall("User32.dll\GetParent", "Ptr", hWnd)
+SwitchToThisWindow(hWnd, how := 1) => DllCall("User32.dll\SwitchToThisWindow", "Ptr", hWnd, "UInt", how)
+SetForegroundWindow(hWnd) => DllCall("User32.dll\SetForegroundWindow", "Ptr", hWnd)
+BringWindowToTop(hWnd) => DllCall("User32.dll\BringWindowToTop", "Ptr", hWnd)
+
+; https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
+ShowWindow(hWnd, how) => DllCall("User32.dll\ShowWindow", "Ptr", hWnd, "UInt", how)
+ShowWinNoActivate(hWnd) => DllCall("User32.dll\ShowWindow", "Ptr", hWnd, "UInt", SW_SHOWNOACTIVATE)
+/**
+ * Minimize a window without activation and optionally set how it will restore
+ * @param {number} hWnd Handle to Window
+ * @param {0|1|2} whatNext How Restore, 0=don't set, 1=Normal on restore, 2=Max on Restore
+ * @Returns Nothing
+ */
+MinWinNoActivate(hWnd, whatNext := 0) {
+   If (whatNext) {
+      twp := GetWindowPlacementBuf(hWnd)
+      twp.showCmd := SW_SHOWMINIMIZED
+      Switch whatNext {
+         Case 1:  ; Normal Restore
+            twp.flags &= ~WPF_RESTORETOMAXIMIZED ; when restored next time, be Normal
+         Case 2:  ; Nax Restore
+            twp.flags |= WPF_RESTORETOMAXIMIZED ; when restored next time, be maximized
+         Default:
+      }
+      DllCall("User32.dll\ShowWindow", "Ptr", hWnd, "UInt", SW_SHOWMINNOACTIVE)
+      SetWindowPlacement(hWnd, twp.Ptr)
+   } Else {
+      DllCall("User32.dll\ShowWindow", "Ptr", hWnd, "UInt", SW_SHOWMINNOACTIVE)
+   }
+}
+/**
+ * Maximize a window, but don't bring it to the foreground
+ * @param Window Handle
+ * @returns Nothing
+ */
+MaxWinNoActivate(hWnd) {
+   mnInfo := stMONITORINFOEX()
+   GetMonitorInfo(monInfo.MonitorNearWindow(hWnd), mnInfo)
+   ogStyle := GetWindowLong(hWnd, GWL_STYLE)
+   SetWindowLong(hWnd, GWL_STYLE, (ogStyle | WS_MAXIMIZE) & (~WS_MINIMIZE)) ; Trigger max size, SWP_FRAMECHANGED will make it happen
+   ; Position full screen and set maximize style in one step
+   res := SetWindowPos(hWnd,
+      mnInfo.rcwork.left,
+      mnInfo.rcwork.top,
+      mnInfo.rcwork.width,
+      mnInfo.rcwork.height,
+      SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOZORDER)
+}
+
+DumpWindowCoords(hWnd) {
+   static wp:= stWINDOWPLACEMENT()
+   DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", wp.Ptr)
+   state := wp.showCmd	;showCmd
+   debug("Window:" WinGetTitle(hWnd) ", state=" hex(state) ", flags=" hex(wp.flags))
+   debug(" rcNormalPosition=" wp.rcNormalPosition.Left " " wp.rcNormalPosition.Right " " wp.rcNormalPosition.Top " " wp.rcNormalPosition.Bottom)
+
+   Return state
+}
+
+;----------------------------------------------------------------------
+; Get, Set and restore window placements
+; https://devblogs.microsoft.com/oldnewthing/20100412-00/?p=14353
+;----------------------------------------------------------------------
+GetWindowPlacementBuf(hWnd) {
+   buf := stWINDOWPLACEMENT()
+   DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", buf.ptr)
+   return buf
+}
+GetWindowPlacement(hWnd, buf) => DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", buf)
+SetWindowPlacement(hWnd, buf) => DllCall("User32.dll\SetWindowPlacement", "Ptr", hWnd, "Ptr", buf)
+RestoreWindowPlacement(hWnd, buf) {
+   SetWindowPlacement(hWnd, buf)
+   SetWindowPos(hWnd, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED)
+}
+;----------------------------------------------------------------------
+; Return a window dimentions
+;----------------------------------------------------------------------
+; getWindowDimensions(hWnd) {
+;    res := Object
+;    rect := stRECT()
+;    DllCall("GetClientRect", "Ptr", hWnd, "Uint", rect.Ptr)
+;    res.Width := rect.right - rect.left
+;    res.Height := rect.bottom - rect.top
+;    Return res
+; }
+
+
+GetLastActivePopup(hWnd) {
+   /*
+     The return value identifies the most recently active pop-up window. The return value is the
+     same as the hWnd parameter, if any of the following conditions are met:
+   
+     The window identified by hWnd was most recently active.
+     The window identified by hWnd does not own any pop-up windows.
+     The window identifies by hWnd is not a top-level window, or it is owned by another window.
+   */
+   Return DllCall("User32.dll\GetLastActivePopup", "Ptr", hWnd, "Ptr")
+}
+
+GetWindow(hwnd, flag := 0x00000004) {
+   Return DllCall("User32.dll\GetWindow", "Ptr", hwnd, "UInt", flag)
+}
+GetTopWindow() => DllCall("GetTopWindow", "Ptr", DllCall("GetDesktopWindow", "Ptr"))
+GetWindowTextLength(hWnd) => DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd)
+winHasTitle(hWnd) => (DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd) > 0)
+GetProp(hWnd, Prop) => DllCall("User32.dll\GetPropW", "Ptr", hWnd, "Str", Prop, "Ptr")
+EnumChildWindows(hWnd, mcb, params := 0) => DllCall("User32.dll\EnumChildWindows", "Ptr", hWnd, "Ptr", mcb, "Ptr", params)
+UpdateWindow(hWnd) => DllCall("User32.dll\UpdateWindow", "Ptr", hWnd)
+GetWindowMinMax(hWnd) {
+   static wp:= stWINDOWPLACEMENT()
+   DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", wp.Ptr)
+   state := wp.showCmd	;showCmd
+   Return state
+}
+IsTopLevelWindow(hWnd) => DllCall("User32.dll\IsTopLevelWindow","Ptr", hWnd) ; undocumented
+IsIconic(hWnd) => DllCall("User32.dll\IsIconic", "Ptr", hWnd)
+IsZoomed(hWnd) => DllCall("User32.dll\IsZoomed", "Ptr", hWnd)
+;----------------------------------------------------------------------
+; Find the first visible window at the top of the Z-Order
+; BUG - Always returing explorer (ThumbnailDeviceHelperWnd)
+;----------------------------------------------------------------------
+TopZWindow(hWnd) {
+   ; Static doesn't work with closures?
+   hWndZ := -1
+   EnumAddress := CallbackCreate(EnumWindowsProc, "Fast")  ; Fast-mode is okay because it will be called only from this thread.
+   DllCall("EnumWindows", "Ptr", EnumAddress, "Int")
+   CallbackFree(EnumAddress)
+   ; debug("Done ->" WinGetClass(hWndZ))
+   Return (hWndZ == hWnd) ? 0 : hWndZ
+
+   EnumWindowsProc(hWnd, lParam) {
+      If (WinGetStyle(hWnd) & WS_VISIBLE AND DontIgnore(hWnd)) {
+         hWndZ := hWnd
+         ; debug("->" WinGetProcessName(hWndZ))
+         Return false
+      } Else
+         Return true
+   }
+}
+
+GetForegroundWindow() => DllCall("User32\GetForegroundWindow","Ptr")
+/*
+Changes the position and dimensions of the specified window. For a top-level window, 
+the position and dimensions are relative to the upper-left corner of the screen. 
+For a child window, they are relative to the upper-left corner of the parent window's client area.
+
+BOOL MoveWindow(
+  [in] HWND hWnd,
+  [in] int  X,
+  [in] int  Y,
+  [in] int  nWidth,
+  [in] int  nHeight,
+  [in] BOOL bRepaint
+);
+*/
+MoveWindow(hWnd, X, Y, W, H, redraw := true) => DllCall("User32\MoveWindow", "Ptr", hWnd, "Int", X, "Int", Y, "Int", W, "Int", H, "Uint", redraw,"Int")
+
+;----------------------------------------------------------------------------
+
+;SystemParametersInfo(uiAction,uiParam:=0,pvParam:=0,fWinIni:=0) {
+;   mh := DLL_User32_ProcAddress("SystemParametersInfoW")   ;Needs to be W at end
+;; error on return type here
+;   return DllCall(mh,  "UInt", uiAction, "UInt", uiParam, "Ptr" pvParam, "UInt", fWinIni)
+;}
+;; need to figure out the parameters here
+;LoadImage(name, itype, cx, cy, fuLoad) {
+;   mh := DLL_User32_ProcAddress("LoadImage")   ;Needs to be W at end
+;; error on return type yere
+;   DllCall(mh,  "UInt", 0, "UInt", name, "UInt" itype, "UInt", cx, "UInt", cy "UInt", fuLoad)
+;}
+;----------------------------------------------------------------------------
+SetWindowPos(hWnd, wx, wy, ww, wh, flag) {
+
+   ; error on return type yere
+   Return DllCall("User32\SetWindowPos"
+      , "Ptr", hWnd
+      , "Ptr", 0	; hWndInsertAfter, using HWND_TOP
+      , "Int", wx
+      , "Int", wy
+      , "Int", ww
+      , "Int", wh
+      , "UInt", flag
+   )
+
+}
+
+RedrawWholeWindow(hWnd, Flags) => DllCall("RedrawWindow","Ptr", hWnd, "Ptr", 0, "Ptr", 0, "Uint", Flags)
+;----------------------------------------------------------------------------
+; Replace WaitWinClose (which doesn't work for UWP apps)
+; NOTE - Good to wait before check so cleanup tasks don't find stray windows
+;----------------------------------------------------------------------------
+WaitForWinClose(targetWin, Timeout) {
+   to := A_TickCount + Integer(Timeout * 1000)
+   ; For children, the window probably exists but hidden when closed
+   Sleep(50)
+   While (IsWindowVisible(targetWin)) {
+      If (A_TickCount > to)
+         Return false
+      Sleep(20)
+   }
+   Return true
+}
+
+;----------------------------------------------------------------------------
+; DWMAPI , only for Integer returns
+;----------------------------------------------------------------------------
+;----------------------------------------------------------------------------
+; Return if not cloaked
+; Needed for tracking messages, since UWP apps also get them even if hidden
+; Not needed if getting WinGetList for non-hidden apps since it is handled internally
+/*
+DWM_CLOAKED_APP (value 0x0000001). The window was cloaked by its owner application.
+DWM_CLOAKED_SHELL (value 0x0000002). The window was cloaked by the Shell.
+DWM_CLOAKED_INHERITED (value 0x0000004). The cloak value was inherited from its owner window.
+*/
+;----------------------------------------------------------------------------
+NotCloaked(hwnd, Cloaked := 0) {
+   DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &Cloaked, 4)	; 14 = DWMWA_CLOAKED, 4 is size of Cloaked
+   Return not Cloaked
+}
+IsCloaked(hwnd, Cloaked := 0) {
+   DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &Cloaked, 4)	; 14 = DWMWA_CLOAKED, 4 is size of Cloaked
+   Return Cloaked
+}
+;----------------------------------------------------------------------
+; Note, user cannot set cloak attribute, only the shell can
+; https://stackoverflow.com/questions/55273112/dwmsetwindowattribute-does-not-work-with-dwmwa-cloak
+;----------------------------------------------------------------------
+CloakWindow(hWnd, How) {
+   cloak := how
+   Return DllCall("dwmapi\DwmSetWindowAttribute"
+      , "Ptr", hWnd
+      , "UInt", DWMWA_CLOAK
+      , "Int*", cloak
+      , "UInt", 4)
+
+}
+
+DwmGetWindowAttribute(hWindow, dwAttribute, &pvAttribute, cbAttribute) {
+   ; The uintp works for a signel integer pointer passed in, not sure for bigger buffers
+   Return DllCall("DWMAPI.dll\DwmGetWindowAttribute"
+      , "Ptr", hWindow	;-- hwnd
+      , "UInt", dwAttribute	;-- dwAttribute
+      , "uintp", &pvAttribute	;-- pvAttribute , no & needed for bufferAlloc  was Ptr
+      , "UInt", cbAttribute	;-- cbAttribute , size
+   )
+}
+; https://web.archive.org/web/20170701081532/http://withinrafael.com/adding-the-aero-glass-blur-to-your-windows-10-apps/
+; https://www.autohotkey.com/boards/viewtopic.php?t=68401 - see bottom of page 1
+SetWindowCompositionAttribute(hWnd, &Ptr) {
+   ;https://github.com/riverar/sample-win10-aeroglass
+   DllCall("DWMAPI.dll\SetWindowCompositionAttribute", "UPtr", hWnd, "UPtr", &Ptr)
+}
+;----------------------------------------------------------------------------
+; Find offset of a window allowng while removing the invisible resizing border
+; See onenote for full WinGetPosEx,
+; borderless dimensions only.
+; Will return all positive numbers
+; Doesn't include the 1 px border
+;----------------------------------------------------------------------------
+WinGetBorderOffset(hWnd) {
+   wInfo := Object()
+   WinGetPosEx(&XX1, &YY1, &WW1, &HH1, hWnd)
+   WinGetPos(&XX2, &YY2, &WW2, &HH2, hWnd)
+   ; Compute the left offset and the bottom offset
+   ; wInfo.Left := (WW1 - WW2) / 2
+   ; wInfo.Bottom := HH1 - HH2 ; top not impacted, only bottom
+   wInfo.T := YY1-YY2
+   wInfo.R := (XX2+WW2)-(XX1+WW1)
+   wInfo.L := XX1 - XX2
+   wInfo.B := (YY2+HH2) - (YY1+HH1) 
+   Return wInfo
+}
+; My testing showed that GetWindowRect() included the adornments, while DwmGetWindowAttribute() did not.
+; DwmGetWindowAttribute() gave me the actual border
+; GetWindowRect(hWnd, ptRect) => DllCall("GetWindowRect", "Ptr", hWnd,"Ptr",ptRect)
+; GetClientRect(hWnd, ptRect) => DllCall("GetClientRect", "Ptr", hWnd,"Ptr",ptRect)
+; The GetClientRect() API function provides the boundaries of the client area. 
+; Unfortunately, it confusingly returns left, top, width, height, while GetWindowRect() returns left, top, right, bottom.
+; CalculateWindowBorders(hWnd) {
+;    windowRect := stRECT()
+;    DllCall("GetWindowRect", "Ptr", hWnd, "Ptr", windowRect.Ptr, "UInt")
+;    windowRect.DumpProperties("Window")
+;    clientRect := stRECT()
+;    DllCall("GetClientRect", "Ptr", hWnd, "Ptr", clientRect.Ptr, "UInt")
+;    clientRect.DumpProperties("Client")
+;    ; ptDiff.x = (rcWind.right - rcWind.left) - rcClient.right;
+;    ; ptDiff.y = (rcWind.bottom - rcWind.top) - rcClient.bottom;
+;    res        := stRECT()
+;    res.left   := (windowRect.right  - windowRect.left) - clientRect.right ; right-> width
+;    res.top    := (windowRect.bottom - windowRect.top)  - clientRect.bottom ; bottom -> height
+;    res.right  := res.left
+;    res.bottom := res.top
+
+;    res.DumpProperties("Border")
+;    return res
+; }
+
+;----------------------------------------------------------------------------
+; Move a window but adjust for hidden border around window
+; Problem is on multi-mon setup, it may use the DPI from the adjacent monitor
+; causing all sorts of sizing issues
+;----------------------------------------------------------------------------
+WinMoveEx(X, Y, W, H, hWindow) {
+   wInfo := Object()
+   ; Inner dimensions
+   WinGetPosEx(&XX1, &YY1, &WW1, &HH1, hWindow)
+   ; Outer dimensions
+   WinGetPos(&XX2, &YY2, &WW2, &HH2, hWindow)
+   ; Enlarge dimensions
+   ; debug("Before X:" X ", Y:" Y ", Width:" W ", Height:" H)
+   X += XX2 - XX1
+   Y += YY2 - YY1
+   W += WW2 - WW1
+   H += HH2 - HH1
+   ;SetWindowPos(hWindow,X, Y, W, H, 0x0404)
+
+   WinMove(X, Y, W, H, hWindow)
+   Return 1
+}
+;----------------------------------------------------------------------------
+; WinGetPos without the invisible border & drop shadow
+; window bounds excluding the drop shadow
+; To do a WinMoveEx we would need to
+; - shift the left by leftOffset
+; NOTE - the window must be shown at least once to get these values
+;----------------------------------------------------------------------------
+WinGetPosEx(&XX, &YY, &WW, &HH, hWnd) {
+   Static rectEx := stRECT()
+   ; https://docs.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmgetwindowattribute
+   DWMRC := DllCall("DWMAPI.dll\DwmGetWindowAttribute"
+      , "Ptr", hWnd	;-- hwnd
+      , "UInt", DWMWA_EXTENDED_FRAME_BOUNDS	;-- dwAttribute
+      , "Ptr", rectEx.Ptr	;-- pvAttribute , no & needed for bufferAlloc  (issue with Ptr for buffer vs PUint for &integer
+      , "UInt", rectEx.Size)	;-- cbAttribute
+   ; Compute the leRECTPlusft offset and the bottom offset
+   XX := rectEx.Left
+   YY := rectEx.Top
+   WW := rectEx.Right - XX
+   HH := rectEx.Bottom - YY
+   Return 1
+}
+;----------------------------------------------------------------------
+; Return the class name, should work with hidden windows as well
+;----------------------------------------------------------------------
+getClassName(hWnd) {
+   Try {
+      Return WinGetClass(hWnd)
+   } Catch As e {
+      Return "Unknown"
+   }
+}
+;----------------------------------------------------------------------------
+; https://devblogs.microsoft.com/oldnewthing/20071008-00/?p=24863
+; For each visible window, walk up its owner chain until you find the root owner.
+; Then walk back down the visible last active popup chain until you find
+; a visible window. If you're back to where you started, then put the window in the
+; Alt+Tab list.
+; If there is a Save-as dialog up, then this will return false for it (since it isn't a valid toplevel)
+;
+; GetLastActivePopup return value identifies the most recently active pop-up window. The return value is
+; the same as the hWnd parameter, if any of the following conditions are met:
+;  - The window identified by hWnd was most recently active.
+;  - The window identified by hWnd does not own any pop-up windows.
+;  - The window identifies by hWnd is not a top-level window, or it is owned by another window.
+; This seems to return WAY too many windows
+;----------------------------------------------------------------------------
+isPrimaryOwner(hWnd) {
+   ; Start at the root owner
+   hwndWalk := GetRootOwner(hWnd)  ;GetRootOwner
+   ; See if we are the last active visible popup
+   hwndLastPU := 0
+   While (hwndLastPU != (hwndTemp := GetLastActivePopup(hwndWalk))) {
+      If (IsWindowVisible(hwndTemp))
+         Break
+      hwndLastPU := hwndWalk := hwndTemp
+   }
+   Return (hwndWalk == hWnd ? 1 : 0)
+}
+
+;----------------------------------------------------------------------
+; Ignore core UWP windows
+;----------------------------------------------------------------------
+; notCoreWindow(hWnd) {
+;    static GW_CHILD := 0x00000005
+
+;    Try {
+;       ; debug("Event:" wParam ", Class=" WinGetClass(hWnd) ", hWnd=" hWnd ", TopChild=" GetWindow(hWnd,5))
+;       ; For UWP and some other apps, we can ignore windows where this returns 0
+;       if (WinExist(hWnd)) {
+;          return WinGetClass(hWnd) == "Windows.UI.Core.CoreWindow" ? false : true
+;       } else {
+;          return true
+;       }
+;    } catch as e {
+;       debug("notCoreWindow Error")
+;       return true ; Window not fully formed yet or alredy destroyed
+;    }
+; }
+
+;----------------------------------------------------------------------------
+; https://autohotkey.com/board/topic/114598-borderless-windowed-mode-forced-fullscreen-script-toggle/
+; Make a window "full screen" or restore it
+; Known issues:
+;
+; BUG - Weird results for windows with custom decorations such as
+; Chrome, or programs with a Ribbon interface.
+; - Emacs will be maximized behind instead of in front of
+; the taskbar. Workaround: WinHide ahk_class Shell_TrayWnd
+; https://stackoverflow.com/questions/34462445/fullscreen-vs-borderless-window
+; TODO - Good artical on how to do this https://devblogs.microsoft.com/oldnewthing/20100412-00/?p=14353
+;        Also https://stackoverflow.com/questions/2398746/removing-window-border
+;        Should also toggle WS_OVERLAPPEDWINDOW style (maximized)
+;----------------------------------------------------------------------------
+MakeFullscreen(how, hWnd) {
+   CoordMode("Mouse", "Screen")
+   /* Toggle all of these  same as WS_OVERLAPPEDWINDOW
+     WS_CAPTION     = 0xC00000L      Title bar
+     WS_MAXIMIZEBOX = 0x010000L
+     WS_MINIMIZEBOX = 0x020000L
+     WS_SIZEBOX     = 0x040000L      Resizeable Borders (same as WS_THICKFRAME)
+     WS_SYSMENU     = 0x080000L      Small menu on icon
+   */
+   Static WINDOW_STYLE_UNDECORATED := "-0xCF0000"    ; CF or CB?
+   Static WINDOW_STYLE_DECORATED   := "+0xCF0000"
+
+   Static winfoCache := Map()
+   Static winstCache := Map()
+
+   If (how) {
+      ; save current state
+      winfoCache[hWnd] := GetWindowPlacementBuf(hWnd)
+      winstCache[hWnd] := WinGetStyle(hWnd)
+      ; Remove decoration and make same size as current monitor
+      WinSetStyle(WINDOW_STYLE_UNDECORATED, hWnd)
+      mon := closureGetMonitorIndexUnderWindow(hWnd)
+      MonitorGet(mon, &Left, &Top, &Right, &Bottom)
+      SetWindowPos(hWnd, Left, Top, Right - Left, Bottom - Top, SWP_NOOWNERZORDER | SWP_FRAMECHANGED)
+      ; Set windows position SWP_NOOWNERZORDER | SWP_FRAMECHANGED in move
+   } Else {
+      If (winfoCache.Has(hWnd)) {
+         ; try to restore prior state, if it exists
+         WinSetStyle(winstCache[hWnd], hWnd)
+         RestoreWindowPlacement(hWnd, winfoCache[hWnd])
+         winfoCache.Delete(hWnd)
+         winstCache.Delete(hWnd)
+      } Else {
+         debug("Making full screen: No saved window style, defaulting for:" WinGetTitle(hWnd))
+         WinSetStyle(WINDOW_STYLE_DECORATED, hWnd)
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Return the AHK monitor number under the mouse
+   ;----------------------------------------------------------------------
+   closureGetMonitorIndexUnderWindow(hWnd) {
+      ;; Get Monitor number at the center position of the Active window.
+      WinGetPos(&x, &y, &width, &height, hWnd)
+      ;debug("GMNW=" MonitorNearWindow(id) ", GMAP=" GetMonitorAtPos(x + width / 2, y + height / 2))
+      Return GetMonitorIndexAtPos(x + width / 2, y + height / 2)
+   }
+}
+;----------------------------------------------------------------------
+; Return the AHK monitor number for some mouse position
+;----------------------------------------------------------------------
+GetMonitorIndexAtPos(Mx, My) {
+   CoordMode("Mouse", "Screen")
+   MC := MonitorGetCount()
+   Loop MC {
+      MonitorGet(A_Index, &MWALeft, &MWATop, &MWARight, &MWABottom)
+      ; A monitor will always be found containing the mouse
+      If (Mx >= MWALeft AND Mx <= MWARight AND My >= MWATop AND My <= MWABottom) {
+         Return A_Index
+      }
+   } Until A_Index > 10
+   Return 0
+}
+/**
+ * Enable/Disable windows animation
+ * Used when changing state of windows
+ * @param {number} hwnd
+ * @returns {number} how 1=disable, 0=enable
+ */
+ChangeWindowAnimation(hWnd,how) {
+   DllCall("dwmapi\DwmSetWindowAttribute"
+   , "Ptr", hWnd
+   , "UInt", DWMWA_TRANSITIONS_FORCEDISABLED
+   , "Int*", how
+   , "UInt", 4)
+   ; DllCall("dwmapi\DwmSetWindowAttribute"
+   ; , "Ptr", hWnd
+   ; , "UInt", DWMWA_CLOAK
+   ; , "Int*", how
+   ; , "UInt", 4)
+}
+;----------------------------------------------------------------------------
+; Round the corners of the GUI for windows 11, ignored on Windows 10
+; Also draws a rounded border
+; Needed since we don't have a caption
+; This value is supported starting with Windows 11 Build 22000
+;----------------------------------------------------------------------------
+Round11Corners(hWnd, how := 2) {
+   howRound := how
+   ; round corners on windows 11, ignored by windows 10
+   ; DWMWA_WINDOW_CORNER_PREFERENCE = 33
+   ; DWMWCP_ROUND=2, 4 = size of int
+   DllCall("dwmapi\DwmSetWindowAttribute"
+      , "Ptr", hWnd
+      , "UInt", DWMWA_WINDOW_CORNER_PREFERENCE
+      , "Int*", howRound
+      , "UInt", 4)
+
+}
+;----------------------------------------------------------------------
+; Windows 11 change border color
+; NOTE - this should work on any window
+;----------------------------------------------------------------------
+Draw11Border(hwnd, color := 0x585858, enable := 1) {
+   R := (color & 0xFF0000) >> 16
+   G := (color & 0xFF00) >> 8
+   B := (color & 0xFF)
+   color := (B << 16) | (G << 8) | R
+   DllCall("dwmapi\DwmSetWindowAttribute"
+      , "ptr", hwnd
+      , "Uint", DWMWA_BORDER_COLOR
+      , "int*", enable ? color : DWMWA_COLOR_DEFAULT
+      , "Uint", 4)
+}
+;----------------------------------------------------------------------
+; Intend to use a Mica backdrop however I think more is needed
+; - https://tvc-16.science/mica-wpf.html
+; - Mica brush perhaps
+; - Manifest change perhaps
+; https://github.com/microsoft/Windows.UI.Composition-Win32-Samples
+; https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_systembackdrop_type
+;----------------------------------------------------------------------
+/*
+// Set Mica effect for layered window
+    DWMWINDOWATTRIBUTE micaAttribute = 1029; // DWMWA_SYSTEMBACKDROP_TYPE
+    DwmSetWindowAttribute(hwnd, micaAttribute, 
+                          &micaEffect, sizeof(micaEffect));
+*/
+Mica11Backdrop(hWnd, how := DWMSBT_MAINWINDOW) {
+   bdType := how
+   DllCall("dwmapi\DwmSetWindowAttribute"
+      , "Ptr", hWnd
+      , "UInt", DWMWA_SYSTEMBACKDROP_TYPE ; 38 or 1029
+      , "Int*", bdType
+      , "UInt", 4)
+
+}
+;----------------------------------------------------------------------------
+; Round the corners around the GUI for windows 10, after posting GUI.
+; Should not be used if borders are enabled since they will be cutoff in the corners.
+; Replaced with version that also draws a border like windows 11 does
+;----------------------------------------------------------------------------
+; drawJustRoundCorners(hWnd, Scale := 1) {
+;    static CRadius := 20
+;    try {
+;       WinGetPos(, , &W, &H, hWnd)
+;       radius := round(CRadius * Scale)
+;       WinSetRegion("0-0 W" W + 1 " H" H + 1 " R" radius "-" radius, hWnd)
+;    } catch as e {
+;       OutputDebug("Error:" e.Message ", at " e.What " line " e.Line)
+;    }
+; }
+
+; HexToDec(hex) {
+;     VarSetStrCapacity(&dec,66)
+;     , val := DllCall("msvcrt.dll\_wcstoui64", "Str", hex, "UInt", 0, "UInt", 16, "CDECL Int64")
+;     , DllCall("msvcrt.dll\_i64tow", "Int64", val, "Str", dec, "UInt", 10, "CDECL")
+;     return dec
+; }
+;----------------------------------------------------------------------
+; Round the corner of a GUI as well as draw a thin border along the edge
+; In theory if already rounded and not resizing then can reuse current window
+; Make sure the auto window border is disabled otherwise it will look offset by a pixel
+; TODO - Can we do this gdip calls and layered windows? Would be anti-aliased but
+; direct region support isn't there would need to make a path manually
+;----------------------------------------------------------------------
+Round10Corners(guiObj, Scale := 1, Reset := 0, Width := 2) {
+   ; Corner Radius ~ like windows 11
+   Static CRadius := 20
+   Static COMPLEXREGION := 3
+   ; Border is based on background color, reset is the same as background
+   clrBorder := lumRGB(guiObj.BackColor, Reset ? 0 : 60)
+
+   hWnd := guiObj.hWnd
+   WinGetPos(&X, &Y, &W, &H, hWnd)
+   radius := Round(CRadius * Scale)
+   Width := Round(Width * Scale)
+   ; Create a new region to round and set the window to the region, windows
+   ; will own the region so any changes need to be made to a copy of it
+   Hrgn := myGDI.CreateRoundRectRgn(0, 0, W - 1, H - 1, radius, radius)
+   If (Hrgn != 0) {
+      ; NOTE - SetWindowRgn is 99% of the time in this function (20+ms)
+      If myGDI.SetWindowRgn(hWnd, Hrgn) {
+         ; We need the window updated with the new region before we draw the border
+         ; And we have to use a new blank region after setting it (different than Round Rect Region)
+         ; Creates a new empty rectangle region from the window and frames it, but magically it works
+         If (myGDI.GetTempWindowRgn(hWnd, &hRgnTemp) = COMPLEXREGION) {
+            ; Create the border brush and frame the window with it
+            ; Would like to get the true border color for windows 10 here
+            hBrush := myGDI.CreateSolidBrush(clrBorder)
+            hDC := myGDI.GetDC(hWnd)
+            myGDI.FrameRgn(hDC, hRgnTemp, hBrush, Width, Width)
+            ; Clean up
+            ; Hrgn is owned by the system after set window region, we don't delete it
+            myGDI.DeleteObject(hBrush, "Brush")
+            myGDI.DeleteObject(hRgnTemp, "Region Copy")
+            myGDI.ReleaseDC(hWnd, hDC)
+         } Else {
+            warning("Failed to return a proper region")
+         }
+      } Else {
+         warning("Failed to set the region with a rounded rectangle")
+      }
+   } Else {
+      warning("CreateRoundRectRgn Failed")
+   }
+   Return
+}
+
+;----------------------------------------------------------------------------
+; Old style drop shadow, seems to work better than FrameShadow
+; Very subtle effect, but works with rounded corners on win10
+;----------------------------------------------------------------------------
+DropShadow(hWnd) {
+   Static CS_DROPSHADOW := 0x20000
+   Static GCL_STYLE := -26
+
+   ex := (A_PtrSize = 8 ? "Ptr" : "")	; 64bit should use GetClassLongPtr / SetClassLongPtr
+   exClass := DllCall("GetClassLong" ex
+      , "UInt", hWnd
+      , "Int", GCL_STYLE)
+
+   DllCall("SetClassLong" ex
+      , "UInt", hWnd
+      , "Int", GCL_STYLE
+      , "Int", exClass | CS_DROPSHADOW)
+
+}
+;----------------------------------------------------------------------
+; Frame Shadow, rounded corners on Win 11
+;----------------------------------------------------------------------
+FrameShadow(hwnd, margin:=20) {
+   DllCall("dwmapi.dll\DwmIsCompositionEnabled", "int*", &dwmEnabled:=0)
+   
+   if !dwmEnabled {
+       DllCall("user32.dll\SetClassLongPtr", "ptr", hwnd, "int", -26, "ptr", DllCall("user32.dll\GetClassLongPtr", "ptr", hwnd, "int", -26) | 0x20000)
+   }
+   else {
+       margins := Buffer(16, 0)    
+       NumPut("int", margin, "int", margin, "int", margin, "int", margin, margins)
+
+       DllCall("dwmapi.dll\DwmSetWindowAttribute", "ptr", hwnd, "Int", 2, "Int*", 2, "Int", 4)
+       DllCall("dwmapi.dll\DwmExtendFrameIntoClientArea", "ptr", hwnd, "ptr", margins)
+   }
+}
+
+;----------------------------------------------------------------------------
+; Toggle fill screen, bound to hotkey
+; Full screen without captions
+;----------------------------------------------------------------------------
+ToggleFillScreen() {
+
+   id := WinExist("A")
+   If (id) {
+      If (hasNoCaption(id)) {
+         MakeFullscreen(0, id)
+      } Else {
+         MakeFullscreen(1, id)
+      }
+   }
+}
+;----------------------------------------------------------------------
+; True if the monitor is pinned to top
+;----------------------------------------------------------------------
+isWinPinned(id) => (WinGetExStyle(id) & 0x8)
+
+;----------------------------------------------------------------------------
+; Return if a windows has a caption/border
+;----------------------------------------------------------------------------
+hasNoCaption(id) {
+   style := WinGetStyle(id)
+   Return (style & WS_CAP) ? false : true
+}
+/*----------------------------------------------------------------------------\
+ Return the DPI awares of the process for the targeted window
+ https://www.autohotkey.com/boards/viewtopic.php?t=44998
+PROCESS_DPI_UNAWARE = 0,
+PROCESS_SYSTEM_DPI_AWARE = 1,
+PROCESS_PER_MONITOR_DPI_AWARE = 2
+\----------------------------------------------------------------------------*/
+GetWindowDpiAwarenessContext(hWnd) => DllCall("GetWindowDpiAwarenessContext","Ptr", hWnd,"Int")
+GetAwarenessFromDpiAwarenessContext(val) => DllCall("GetAwarenessFromDpiAwarenessContext","Ptr", val,"Int")
+;----------------------------------------------------------------------
+; Seems to work better than GetProcessDpiAwareness for Excel and Chrome
+;----------------------------------------------------------------------
+GetWindowDPIAwareness(hWnd) {
+   return GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hWnd))
+}
+GetProcessDpiAwareness(hwnd) {
+   ;Static PROCESS_DPI_AWARENESS := {0: "PROCESS_DPI_UNAWARE", 1: "PROCESS_SYSTEM_DPI_AWARE", 2: "PROCESS_PER_MONITOR_DPI_AWARE"}
+
+   ProcessId := WinGetPID(hwnd)
+   If (!(hProcess := DllCall("Kernel32.dll\OpenProcess", "UInt", 0x0400, "Int", false, "UInt", ProcessId, "Ptr"))) {
+      Return "OpenProcess ERROR"
+   }
+   If (DllCall("Shcore.dll\GetProcessDpiAwareness", "Ptr", hProcess, "IntP", &DPI_AWARENESS:=-1)) {
+      DllCall("Kernel32.dll\CloseHandle", "Ptr", hProcess)
+      Return "GetProcessDpiAwareness ERROR"
+   }
+   DllCall("Kernel32.dll\CloseHandle", "Ptr", hProcess)
+   Return DPI_AWARENESS
+}
+; HICON:%IconHwnd%
+
+
+dlog("Include File Loaded")

@@ -1,0 +1,1014 @@
+;----------------------------------------------------------------------------
+; Task View Class
+; Integrated shellhook to track better
+; Requires DllCall("RegisterShellHookWindow") to be called before this is created
+;----------------------------------------------------------------------------
+/*
+   Bugs/Issues with this method
+   x Ignores MS Project SDI child windows, since they don't trigger shell-hook events,
+     but do show up as "toplevel" windows for WinGetList calls.
+   x Shellhook tracks across desktops, is that OK or should we add COM code
+     to manage desktop. May be a feature
+   I the ONLY advantage for this method is that recently minimized files stay next in the
+     Z-Order vs going to the bottom. Makes it easy to switch back to them. Windows (or the apps)
+     are inconsistent when an app is minimized where it shows up in the Z-Order. Sometimes
+     on the bottom and sometimes the next to top.
+*/
+#Include ..\common\dllFactory.ahk2            ; Common files, mostly dllcall window related
+#Include ..\common\WindowFunctions.ahk2     ; Window Related Functions
+#Include UWPFunctions.ahk2
+; #Include StopWatch.ahk2             ; Timing functions for debugging
+#Include vda.ahk2                   ; virtual desktop accessor wrapper
+; #Include Explorer.ahk2
+
+Class clsTaskView {
+   handleCache := Map()
+   icnCache := Map()
+   uwpIconPathCache := Map()
+   uwpPngPathCache := Map()
+   iconPath := A_ScriptDir . "\Icons"	;104 removed static
+   UWPIcons := this.iconPath . "\UWPIcons"
+
+   __new() {
+      ;----------------------------------------------------------------------------
+      ; Groups for the TaskView, create them before taskObject instance creation
+      ;----------------------------------------------------------------------------
+      ; MDI Apps where the child windows show up as parents as far as Windows is concerned
+      GroupAdd("ChildWindowClass", "ahk_class JWinproj-WhimperMainClass")     ; MS Project is MDI
+      GroupAdd("ChildWindowClass", "ahk_class VISIOA")                        ; Visio is MDI
+      ;GroupAdd("ChildWindowClass", "ahk_class SlickEdit")
+      GroupAdd("DesktopClass", "ahk_class WorkerW")                       ; Child windows that show up as main windows
+      GroupAdd("DesktopClass", "ahk_class Shell_TrayWnd")                 ; Child windows that show up as main windows
+      ; Ignore these window classes (doesn't require hiddenwindows on)
+
+      this.eventCB := 0
+      this.arrayTasks := Array() ; Public list of handles in tab-order
+      this.arrayHookOrder := Array()  ; Window tracking in correct order
+      this.mapHookChildren := Map() ; hash to hold the child windows for specific window types
+      this.pidAppCache := Map()     ; mapping of the PID to the true UWP appname
+      ; Blank GUI to allow task switching
+      this.MyGui := Gui("-Caption +ToolWindow")
+      ; child window callback
+      this.CWCB := CallbackCreate(this.EnumChildWindowsProc.Bind(this), "Fast", 2)
+      ; this.sw := clsStopWatch()
+      ; Cache the custom icons
+      ; this.flag := false
+      Loop Files this.UWPIcons . "\*.*" {
+         If (A_LoopFileExt ~= "i)ico|png") {
+            SplitPath(A_LoopFileFullPath, , , , &baseName)
+            this.uwpIconPathCache[baseName] := A_LoopFileFullPath
+         }
+      }
+
+      ; Then Grab all of the initial windows and
+      this.InitHook_Order()
+
+      ; Register shellhook to track window creation/activation/destruction
+      ; so we can maintain a proper last used order vs. Z-Order which
+      ; moves recent minimized windows to the bottom of the Z-Order
+      ; move RegisterShellHookWindow/Deregister out of this class if other classes are doing this in the same AHK instance
+      /*
+         Registers a specified Shell window to receive certain messages for events or notifications that are useful to Shell applications.
+
+         The event messages received are only those sent to the Shell window associated with the specified window's desktop. 
+         Many of the messages are the same as those that can be received after calling the SetWindowsHookEx function and 
+         specifying WH_SHELL for the hook type. The difference with RegisterShellHookWindow is that the messages are received 
+         through the specified window's WindowProc and not through a call back procedure.       
+      */
+      DllCall("RegisterShellHookWindow", "UInt", A_ScriptHwnd)    ; doing this outside of this class since multiple classes do this monitoring
+      MsgNum := DllCall("RegisterWindowMessage", "Str", "SHELLHOOK")
+      dlog("Registering SHELLHOOK Message Number " hex(MsgNum))
+      OnMessage(MsgNum, this.ShellMessage.Bind(this))
+
+      dlog("Created clsTaskView instance")
+   }
+   __delete() {
+      dlog("DeRegistered SHELLHOOK Message Monitor")
+      this.arrayTasks := Array()
+      this.arrayHookOrder := Array()
+      this.MyGui.Destroy()
+      DllCall("DeregisterShellHookWindow", "Ptr", A_ScriptHwnd)
+      CallbackFree(this.CWCB)
+   }
+   installCB(cb) {
+      this.eventCB := cb
+   }
+   Entries {	;131
+      get => this.arrayTasks.Length
+   }
+   Populate(inTask, hwnd := 0) {
+      this.TopLevelWindowList(inTask, hwnd)
+   }
+   Contents {
+      get => this.arrayTasks
+   }
+   Item[row] {
+      get => this.arrayTasks[row]
+   }
+
+   RemoveAt(row) {
+      this.arrayTasks.RemoveAt(row)
+   }
+   ; waitForNextWindow(ms) {
+   ;    debug("Waiting up to " ms " ms")
+   ;    then := A_TickCount + ms
+   ;    this.flag := false
+   ;    while (A_TickCount < then AND this.flag == false) {
+   ;       debug("Loop count=" A_Index)
+   ;       Sleep(10)
+   ;    }
+   ; }
+
+   ;===========================================================================================================
+   ; Prior Window Functions
+   ;===========================================================================================================
+   ;----------------------------------------------------------------------------
+   ; Swap to prior task based on shell hook monitoring
+   ; TODO - option to skip minimized
+   ;----------------------------------------------------------------------------
+   swapPrevTask(CheckAll := 0) {
+      ; should we prune first?
+      this.PruneDeadHandles()
+      ; If we have at least two remaining
+      ; we have something to possibly switch to
+      ; then switch back to it.
+      ; Some windows on differnt desktop (hidden)
+      hw := DetectHiddenWindows(1)
+      If (this.arrayHookOrder.Length >= 1) {
+         ; if active class is "WorkerW" then no windows are active
+         If (WinActive("ahk_group DesktopClass")) {
+            ; All windows are minimized if the last active one was
+            myHwnd := this.arrayHookOrder[1]
+            debug("The Last remaining window was Minimized, restoring:" WinGetTitle(myHwnd))
+            this.myWinActivate(myHwnd)
+         } Else If (this.arrayHookOrder.Length >= 2) {
+            recent := this.arrayHookOrder.Clone()
+            myHwnd := recent.RemoveAt(1)    ; extract active
+            myPID := WinGetPID(myHwnd)
+            myClass := WinGetClass(myHwnd)
+            ; Loop over remaining windows (in tracked z-order)
+            ; find first one that is in a different class
+            ; or same class in a different Process and switch to it.
+            For hWnd in recent {
+               hClass := WinGetClass(hWnd)
+               ; 2024-12-06 Minimize skip check
+               If (CheckAll OR WinGetMinMax(hWnd) >= 0) {
+                  If (hClass != myClass) {
+                     ; Always swap to windows in other class (may be in same process)
+                     this.myWinActivate(hWnd)
+                     Break
+                  } Else {
+                     ; Same class, check a couple exceptions due tabs in the app
+                     ; If hWnd != GetRoot(hWnd) then we skip it
+                     ;debug(hWnd " vs " GetRoot(hWnd) " : " WinGetTitle(hWnd))
+                     If (WinExist("ahk_group ChromeExt ahk_id " hWnd)) {
+                        ; Chrome different window, OK
+                        this.myWinActivate(hWnd)
+                        Break
+                     } Else If (WinGetPID(hWnd) != myPID) {
+                        ; Different process, OK
+                        this.myWinActivate(hWnd)
+                        Break
+                     }
+                  }
+               } else
+                  warning("Failed Minimize only check")
+            } Else {
+               warning("swapPrevTask: No recent windows")
+            }
+         }
+      }
+      DetectHiddenWindows(hw)
+      Return
+   }
+   ;----------------------------------------------------------------------------
+   ; Swap to prior window that is part of active process
+   ; Handle tabs in MDI apps as well
+   ; Called from a key binding
+   ;----------------------------------------------------------------------------
+   swapPrevSibling(Direction := 1) {
+      ; Also some special processig for certain apps
+      myHwnd := this.TopLevelWindowList(1)
+      ; If MDI Switch wasn't used and we have more than one window, try switching to sibling
+      If ((!this.KeyboardSwitch(Direction, this.arrayTasks.Length)) and (this.arrayTasks.Length > 1)) {
+         ; 1st entry in Z-Order has to be current App
+         myHwnd := this.arrayTasks.RemoveAt(1)
+         ;debug("From:", myHwnd)
+         If (this.arrayTasks.Length > 0) {
+            loopHwnd := this.arrayTasks.RemoveAt(1)
+            this.myWinActivate(loopHwnd)
+         }
+      }
+      Return
+   }
+   ;----------------------------------------------------------------------------
+   ; MDI switch windows back forward
+   ; Used for apps that don't return separate windows, like tabbed apps
+   ; Cycles through open clients vs swap to prior
+   ;----------------------------------------------------------------------------
+   KeyboardSwitch(Direction, tlWindows) {
+      Static CT := "{Ctrl down}{Tab}{Ctrl up}"
+      Static CST := "{Shift down}{Ctrl down}{Tab}{Shift up}{Ctrl up}"
+      Static C6 := "{Ctrl down}{F6}{Ctrl up}"
+      Static CS6 := "{Shift down}{Ctrl down}{F6}{Shift up}{Ctrl up}"
+      Static CE := "{Alt down}w{Alt up}"
+      wasUsed := 0
+      ; No longer used
+      If (WinActive("ahk_group F6Class")) {
+         ; Apps that se F6 vs Ctrl-Tab, generally single instance
+         keys := Direction ? C6 : CS6
+         wasUsed++
+      } Else If (WinActive("ahk_class AgWinMainFrame")) {
+         ; Lightroom, toggles reel view at bottom
+         keys := C6
+         wasUsed++
+      } Else If (WinActive("ahk_group ChromeExt")) {
+         ; CLUT Chrome Extension set to Alt-w, ignore if multiple instances
+         If (tlWindows == 1) {
+            keys := Direction ? CE : CT
+            wasUsed++
+         }
+      } Else If (WinActive("ahk_group CTMClass") AND (tlWindows == 1)) {
+         ; Only tab switch if one client exsts, if separate windows then swap them
+         ; Browsers, includes chrome if not handled by above case
+         keys := Direction ? CT : CST
+         wasUsed++
+      }
+      ; Send shortcut keys or just return
+      If (wasUsed) {
+         SendInput(keys)
+      } Else {
+         ;debug("No known MDI client to switch to - OK")
+      }
+      Return wasUsed
+   }
+
+   ;===========================================================================================================
+   ; Return List of Top Level or Child/Sibling Windows
+   ;===========================================================================================================
+
+   ;----------------------------------------------------------------------------
+   ; Return a list of active windows in z-order, only the ones that would show up
+   ; in an Alt-Tab list Then filter the list for Alt-Tab candidates only
+   ; For top-level tasks use the shell hook order (most recent on top), vs Z-Order
+   ; https://autohotkey.com/boards/viewtopic.php?f=5&t=28760&p=135057
+   ; https://github.com/kvakulo/Switcheroo/blob/master/Core/AppWindow.cs
+   ;----------------------------------------------------------------------------
+   TopLevelWindowList(inTask := 0, myHwnd := 0) {
+      ;----------------------------------------------------------------------------
+      ; Code below
+      ; This will only work if the active task is as intented
+      ;----------------------------------------------------------------------------
+      If (myHwnd = 0) {
+         myHwnd := WinActive("A")
+      }
+      ; 2024-03-27 Check for WinExist vs any handle
+      If (inTask AND WinExist(myHwnd)) {
+         this.arrayTasks := Array()
+         ; Push any child windows into arrayTasks with this callback
+         EnumChildWindows(myHwnd, this.CWCB, 1)
+         ; Or get any sibling windows of same class if no MDI clients found (e.g excel or explorer)
+         If (this.arrayTasks.Length = 0) {
+            cls := WinGetClass(myHwnd)
+            Switch cls {
+               ; BUG - When we close an explorer window we won't get siblings here since it fails WinExist
+               ;       Both owner and target windows are the same, and they are both gone at this point
+               Case "CabinetWClass": ; Windows Explorer
+                  wid_List := WinGetList("ahk_class " WinGetClass(myHwnd)) ; Windows for sameClass Instance name as active
+                  ; TODO - Would be nice to get windows11 explorer tabs here vs the window handles
+                  ; Work out details of control handle vs window handle (not really a child window)
+                  ; Almost works but the tab isn't activated in cbLbSelect but the correct window is jumpped to
+                  ; this.arrayTasks := GetActiveExplorerTab()
+                  ; Return myHwnd
+               Case "XLMAIN": ; Excel
+                  wid_List := WinGetList("ahk_class " WinGetClass(myHwnd)) ; Windows for sameClass Instance name as active
+               Default:
+                  wid_List := WinGetList("ahk_class " WinGetClass(myHwnd) " ahk_pid " WinGetPID(myHwnd)) ; Windows for same Class/PID Instance name as active
+            }
+            ; CabinetWClass is class for Windows 10/11 explorer
+            ; Loop over each window in Z-order and extract those we care about into arrayTasks
+            ; Looks like many non-candidates don't make it to the WinGetList (which is nice)
+            this.arrayTasks.Capacity := wid_List.Length
+            For loopHwnd in wid_List {
+               If (isValidShellHookCandidate(loopHwnd)) {
+                  this.arrayTasks.push(loopHwnd)
+               }
+            }
+         }
+      } Else {
+         ; Make a copy of the shell hook tracking then replace any candidate parents with their MDI children
+         this.arrayTasks := this.arrayHookOrder.Clone()
+         this.ReplaceWithChildren()
+      }
+      If (this.arrayTasks.Length = 0) {
+         logError("Empty Task List - any active windows?")
+      }
+      Return myHwnd
+   }
+   ;----------------------------------------------------------------------------
+   ; Callbaack to populate the arrayTasks with child windows
+   ;----------------------------------------------------------------------------
+   EnumChildWindowsProc(hWnd, conTinU) {
+      If (this.altTabChildCandidate(hWnd)) {
+         ; Found one, either stop or continue
+         this.arrayTasks.push(hWnd)
+         Return conTinU
+      }
+      Return true  ; Tell EnumWindows() to continue until all windows have been enumerated.
+   }
+
+
+   ;===========================================================================================================
+   ; Valid Window checks
+   ;===========================================================================================================
+
+   ;--------------------------------------------------------------------------------------
+   ; Is this window have any deleted children (e.g. MDI container only)
+   ; MDI apps like Excel 2010 will have the tasklist_deleted for the main app, so we ignore it
+   ; One issue is the deleted (main gui) may be stacked in Z-Order properly
+   ; but the client windows are way down the list even though one of them should show up on top
+   ;--------------------------------------------------------------------------------------
+   isWindowDeleted(hWnd) => GetProp(hWnd, "ITaskList_Deleted")
+   ;===========================================================================================================
+   ; Only return child/mdi windows that are an alt-tab candidate in z-order (recently minimized at the bottom)
+   ;===========================================================================================================
+   altTabChildCandidate(hWnd) {
+      Static WS_MDI_CHILD := WS_EX_MDICHILD | WS_EX_APPWINDOW
+
+      style := WinGetStyle(hWnd)
+      ; Only vlsible windows with titles are considered
+      If ((style & WS_VISIBLE) && winHasTitle(hWnd)) {
+         es := WinGetExStyle(hWnd)
+         ; Ignore tool windows and only allow app windows with size boxes
+         ; WS_SIZEBOX needed for MS Project whereas MS Word can't meet the WS_EX_WINDOWEDGE requirement
+         ; maybe a test if this is truely a toplevel
+         Return (es & WS_MDI_CHILD) or (style & WS_SIZEBOX) ? true : false
+      }
+      Return false
+   }
+   ;----------------------------------------------------------------------------
+   ; Some children should be considered parents for menu concerns
+   ;----------------------------------------------------------------------------
+   IsParentOverride(&targetWin, &ownerWin) {
+      owner := GetRoot(targetWin)  ; for MS Project, retuns the toplevel
+      If (owner != targetWin) {
+         If (WinExist("ahk_group ChildWindowClass ahk_id " owner)) {
+            ; This will act on the parent window vs the child window in all cases for MS Project
+            targetWin := ownerWin := owner
+            Return 1
+         } Else {
+            ownerWin := owner
+            Return 0
+         }
+      } Else {
+         ownerWin := targetWin
+         Return 1
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Return the min/max state of a window or MDI Client
+   ;----------------------------------------------------------------------------
+   getWinState(hWnd) {
+      ; -1 = minimized, 1 = maximized, 0 = normal
+      If (WinGetExStyle(hWnd) & WS_EX_MDICHILD) {
+         state := IsIconic(hWnd) ? -1 : IsZoomed(hWnd) ? 1 : 0
+         ;debug("Child " WinGetClass(hWnd) " is state " state)
+      } Else {
+         state := WinGetMinMax(hWnd) ; -1 = minimized, 1 = maximized, 0 = normal
+      }
+      Return state
+   }
+
+   ;===========================================================================================================
+   ; Activate Windows functions
+   ;===========================================================================================================
+
+   ;===========================================================================================================
+   ; Active a window, first grap the foreground then bring the other window to the top
+   ;===========================================================================================================
+   myWinActivate(hWnd) {
+      ; Creating a dummy (non-visible/no-tray icon) GUI and showing it "should" grant me
+      ; the privledge to set a foreground window
+      ; 30 ms for the GUI
+      actWin := WinExist("A")
+      If (actWin) {
+         this.MyGui.Show()
+         If (WinWaitActive(this.MyGui.hWnd, , 1.0) = 0)
+            warning("taskClass - WinWaitActivate fail for dummy GUI, Error=" A_LastError)
+         ; Now AHK has the foreground
+         this.windowToTop(hWnd, actWin)
+         this.MyGui.Hide()
+      } Else {
+         warning("myWinActivate: Did not find an active window")
+      }
+   }
+   ;===========================================================================================================
+   ; Bring a window to the top, AHK will need to have the foreground focus for this to work reliably
+   ;===========================================================================================================
+   windowToTop(hWnd, actWin := 0) {
+      try {
+         title := WinGetTitle(hWnd)
+      } catch as e {
+         elog(e,"WinTitle error")         
+         return
+      }
+      ; SwitchToThisWindow is deprecated, but it works really well, parameter of 1 makes it like Alt-Tab
+      ; https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-switchtothiswindow
+      ; SwitchToThisWindow may only be needed for toplevel windows
+      ; First walk up the parent chain to see if this is a child window
+      myParent := GetRoot(hWnd)  ;GetRootOwner
+      If (myParent = hWnd) {
+         ; This is already a toplevel
+         ; < 1ms to 10 ms normally
+         SwitchToThisWindow(hWnd)
+         ;SetForegroundWindow(hWnd)  ; async, will have to wait for it to become active.
+         ; BringWindowToTop has long timeout on hung windows, detect those first
+         ; https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-ishungappwindow
+         ; Can also check if the class of the window is "Ghost", but if hung IsHungAppWindow should work
+         ; Another method is to seend a WM_NULL to the window with a SendMessage and timeout, trap the timeout as hung.
+         If (IsHungAppWindow(hWnd)) {
+            warning("Hung Window Detected:" title " Ghost=" GhostWindowFromHungWindow(hWnd) " vs hWnd=" hWnd)
+            If (gw := GhostWindowFromHungWindow(hWnd) != hWnd) {
+               ; Try to raise the Ghost window
+               SwitchToThisWindow(gw)
+            }
+         } Else {
+            If (BringWindowToTop(hWnd) = 0)
+               warning("taskClass - BringWindowToTop fail for '" title "', Error=" A_LastError)
+         }
+      } Else {
+         ; This is a child, make sure the parent is visible first (and not minimized)
+         ; For sibling switches the active will always be the parent
+         ;
+         ; AHK temp GUI wasn't used for task switching, so get the current active window
+         If (actWin = 0)
+            actWin := WinExist("A")
+
+         If (WinGetMinMax(myParent) = -1) {
+            ; Was minmized
+            ; debug("Restoring sibling window " WinGetClass(hWnd))
+            WinRestore(myParent)
+         } Else If (actWin > 0 && myParent != actWin) {
+            ; Sibling parent wasn't active
+            debug("Switching to parent window, This:" WinGetClass(hWnd) ", Parent:" WinGetClass(myParent) ",Active:" WinGetClass(actWin) ",State=" this.getWinState(hWnd))
+            SetForegroundWindow(myParent) ; A little more subtle to bring the parent to the top
+         }
+         /*
+            Parent is now active, so bring child window to the top
+            Brings the specified window to the top of the Z order. If the window is a top-level window,
+            it is activated. If the window is a child window, the top-level parent window associated
+            with the child window is activated.
+         */
+         If (BringWindowToTop(hWnd) = 0)
+            warning("taskClass - BringWindowToTop fail for '" title "', Error=" A_LastError)
+         /*
+         SetForegroundWindow(hWnd) notes
+         Brings the thread that created the specified window into the foreground and activates the window.
+         Keyboard input is directed to the window, and various visual cues are changed for the user.
+         The system assigns a slightly higher priority to the thread that created the foreground window
+         than it does to other threads.
+         
+         Caller must be the current or most recent foreground process
+         
+         When an application creates a window, the system puts it at the top of the
+         z-order for windows of the same type.  You can use the BringWindowToTop
+         function to bring a window to the top of the z-order for windows of the
+         same type.  You can rearrange the z-order by using the SetWindowPos and
+         DeferWindowPos functions.
+         
+         An application activates a top-level window by calling the SetActiveWindow
+         function.  Other functions can cause the system to activate a different
+         top-level window, including SetWindowPos, DeferWindowPos,
+         SetWindowPlacement, and DestroyWindow.
+         
+         */
+      }
+   }
+   /**************************************************************************************
+    *       Return the window that is current active, including child windows in a MDI type app
+    *       Used by the windowToKey window pinning code
+    **************************************************************************************/
+   winOnTop() {
+      this.arrayTasks := Array()
+      myHwnd := WinActive("A")
+      If (myHwnd) {
+         EnumChildWindows(myHwnd, this.CWCB, 0)
+         If (this.arrayTasks.Length = 0) {
+            debug("No child window found, using active window: " hx(myHwnd))
+            Return myHwnd
+         } Else {
+            debug("Returning top child window: " hx(this.arrayTasks[1]))
+            Return this.arrayTasks[1]
+         }
+      }
+   }
+
+   ;===========================================================================================================
+   ; Utility Functions
+   ;===========================================================================================================
+   getPath(hwnd) {
+      Try {
+         Return WinGetProcessName(hwnd)
+      } Catch As e {
+         Return (hwnd)
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Try to load an icon and hash it by handle
+   ; Try by Path first
+   ; Then by UWP App Name if Path didn't have one
+   ; If we don't have one then search through the manifest to find one
+   ; and copy it over
+   ; TODO - Should we make an immediate decision on UWP vs regular programs?
+   ;----------------------------------------------------------------------
+   getMyIcon(hWnd) {
+      Static H := "HICON:*"
+      Static defIcon := this.iconPath . "\Win" OSVersion() ".png"
+      ; Static CGC := "Windows.UI.Core.CoreWindow1"
+      ; Static AFC := "ApplicationFrameWindow"
+
+      Try {
+         ; 1. Check the cache first, 99.9% will be in the cache
+         If (icnHwnd := this.handleCache.Get(hWnd, false)) {
+            Return H . icnHwnd
+         } Else If (WinExist(hWnd)) {
+            ; 2. If not, then load from the window or normal process path (non UWP files)
+            ; For windows that support  WM_GETICON, will generally have dynamic icons
+            ; so we never put those in the cache. (e.g. explorer)
+            If (ic := loadWindowOK(hWnd)) {
+               Return ic
+            } Else If (ic := loadFileOK(procPath := getProcessPath(hWnd), hWnd)) {
+               Return ic
+            } Else {
+               ; 3. No icon resource, try the pre-loaded UWP files or title
+               If (appName := UWPAppName(hWnd)) {
+                  If (icnFname := this.uwpIconPathCache.Get(appName, false)) {
+                     If (ic := loadFileOK(icnFname, hWnd))
+                        Return ic
+                  } Else If (procPath ~= "WindowsApps") {
+                     ; 4. Have to search for an appropriate png file from source
+                     ; UWP running under it's own path name
+                     If (ic := CheckExe(procPath, hWnd))
+                        Return ic
+                  } Else If (procPath ~= "ApplicationFrameHost") {
+                     ; 4. Have to search for an appropriate png file from source
+                     ; UWP running under ApplicationFrameHost.exe
+                     /*
+                     NOTE - UWP Shortcomings
+                     - UWPAppName always works and returns the short display name also knows the AppID internally
+                       however I can't get the full process name path or the path the manifest
+                     - So I resort to trying to get the path/pname from the executable of the child process
+                       however, if it is minimized or on a different desktop there is no visible child process
+                     - Really want a single function that using the AppID or FullName (I can get either one)
+                       can pull the logo resource or location of the logo file directly.
+                     - TODO - Using the package manager and known AppID, find this information out directly
+                     */
+                     If (ic := CheckExe(UWPPathName(hWnd), hWnd))
+                        Return ic
+                  } Else {
+                     warning("getMyIcon: Didn't find UWP app for path " procPath)
+                  }
+               } Else {
+                  warning("getMyIcon: Failed to find an existing UWP app name for " procPath)
+               }
+            }
+         ; } Else {
+         ;    warning("getMyIcon: Window no longer exists " hex(hWnd))
+         }
+      } Catch As e {
+         elog(e, "For Handle " hex(hWnd))
+      }
+      ; Try the default if all other attempts failed
+      Return loadFileOK(defIcon, hWnd)
+
+      ;----------------------------------------------------------------------
+      ;             C L O S U R E S   B E L O W
+      ;----------------------------------------------------------------------
+      /**
+       * Return the process path for some handle or blank if not existing
+       * @param hWnd to Window 
+       * @returns path to process or blank if fails
+       */
+      getProcessPath(hWnd) {
+         Try {
+            Return WinGetProcessPath(hWnd) 
+         } Catch {
+            Warning("Failed to return process path for " hex(hWnd) ", Exists=" hex(WinExist(hWnd)))
+            return ""            
+         }
+      }
+      ;----------------------------------------------------------------------
+      ; create and remove hash entries for hWnd -> Icon
+      ; See if we have a previous or new icon from a window
+      ;----------------------------------------------------------------------
+      loadWindowOK(hWnd) {
+         If (hicon := getWindowIcon(hWnd)) {
+            ; Does not work for UWP or some windows apps
+            ; debug("getWindowIcon Icon " key " " hex(hWnd))
+            ; Note - NOT cached for windows since they change their icons occasionally
+            Return H . hicon
+         } Else If (hicon := getWindowStaticIcon(hWnd)) {
+            ; debug("getWindowStaticIcon Icon " key " " hex(hWnd))
+            ; If above timed out get the static window icon
+            Return H . (this.handleCache[hWnd] := hicon)
+         }
+      }
+      ;----------------------------------------------------------------------
+      ; See if we have a previous or new icon from a file
+      ;----------------------------------------------------------------------
+      loadFileOK(fName, hWnd) {
+         Try {
+            ; icon is handle, key is the executable
+            ; Need to rethink the ordering, should only rely on the window handle cached
+            If (this.icnCache.Has(fName)) {
+               ; debug("Reusing Icon " key " " hex(hWnd))
+               Return H . (this.handleCache[hWnd] := this.icnCache[fName])
+            } Else If (icon := LoadPicture(fName, "Icon1", &iType)) {
+               ; debug("LoadPicture Icon " key " " hex(hWnd))
+               Return H . (this.icnCache[fName] := this.handleCache[hWnd] := icon)
+            } Else {
+               Return 0
+            }
+         } Catch Error As e {
+            warning(e.Message)            
+         }
+         Return 0
+      }
+      /**
+       * Return an dynamic icon handle associated with some window (larger size)
+       * @param hWnd to Window 
+       * @returns handle to icon 
+       * ref
+       * https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-geticon
+       * https://www.reddit.com/r/AutoHotkey/comments/ejm86o/can_ahk_retrieve_the_active_windows_system_tray/
+       */
+      getWindowIcon(hWnd, big := 1) {
+         Static WM_GETICON := 0x007F
+
+         Static ICON_SMALL := 0
+         Static ICON_BIG := 1
+         ticks := A_TickCount
+         DPI := DllCall("GetDpiForWindow", "Ptr", hWnd)
+         Try {
+            ; This is less generic, but may timeout if the window is busy
+            ; Work needs longer, esp when apps are launching
+            clName := getClassName(hWnd)
+            IconHwnd := SendMessage(WM_GETICON, big ? ICON_BIG : ICON_SMALL, DPI, , hWnd, , , , 200)
+            If (A_TickCount - ticks) > 0
+               debug("Took " A_TickCount - ticks " ms to get icon handle for: " hex(hWnd) ", Class=" clName)
+         } Catch Error As e {
+            debug("Timeout " A_TickCount - ticks " ms getting icon handle for: " hex(hWnd) ", Class=" clName)
+            IconHwnd := 0
+         }
+         Return IconHwnd
+      }
+      ;----------------------------------------------------------------------
+      ; Grab the static icon associated with the window
+      ;----------------------------------------------------------------------
+      getWindowStaticIcon(hWnd, big := 1) {
+         Static GCLP_HICONSM := -34
+         Static GCLP_HICON := -14
+         Return DllCall("GetClassLongPtr", "Ptr", hWnd, "Int", big ? GCLP_HICON : GCLP_HICONSM)
+      }
+
+      ;----------------------------------------------------------------------
+      ; Closure to check for a valid UWP path and get an icon if possible
+      ; resort to kludgery and copy a png file from the targe location if possible
+      ;----------------------------------------------------------------------
+      CheckExe(pPath, hWnd) {
+         If (pPath) {
+            ; TODO - replace saveUWPLogo with more WinRT method if we figure out how to do it properly
+            ; debug("Found UWP App with no icon, Name='" appName "', target=" exeTargetPath)
+            If (lookFor := saveUWPLogo(appName, pPath, this.UWPIcons)) {
+               ; lookFor := this.UWPIcons . appName . ".png"
+               ; See if file was indeed copied OK, then use it if so
+               If FileExist(lookFor) {
+                  debug("Copied new image file " lookFor)
+                  this.uwpIconPathCache[appName] := lookFor
+                  If (ic := loadFileOK(this.uwpIconPathCache[appName], hWnd)) {
+                     debug("Loaded a new image for new app " appName)
+                     Return ic
+                  } Else {
+                     warning("getMyIcon: Expected to load image " lookFor " but could not")
+                  }
+               } Else {
+                  warning("getMyIcon: Expected to find image " lookFor " but could not")
+               }
+            } Else {
+               warning("getMyIcon: Failed to find icon file for target'" pPath "', app=" appName)
+            }
+         } Else {
+            warning("getMyIcon: Found UWP App with no path, Name='" appName ", Could not find the child process!")
+         }
+         Return 0
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Remove the icon handle
+   ; keep the icon in memory
+   ;----------------------------------------------------------------------
+   clearIconHandle(hWnd) {
+      If (this.handleCache.Has(hWnd)) {
+         this.handleCache.Delete(hWnd)
+      }
+   }
+
+   ;===========================================================================================================
+   ; Shell Hook Monitoring Code to track last used windows in proper (Alt-Tab) order
+   ;===========================================================================================================
+
+   ;----------------------------------------------------------------------------
+   ; Callback for messages
+   ; wParam will be the message number, lParam will be the window title impacted
+   ; msg is the messge this callback is registered to (stays the same)
+   ; hwnd is the window this message is sent to (stays the same)
+   ; NOTE - UWP Apps
+   ;      - When created we get a destroy on the child window (true app name), then creation on the ApplicationFrameHost
+   ;      - When destroyed, we get the opposite effect (destroy ApplicationFrameHost then child window created)
+   ;      - The child window always times out so we essentially ignore them
+   ;      - Also when switching desktops
+   ;----------------------------------------------------------------------------
+   ShellMessage(wParam, hWnd, msg, hParentWnd) {
+      ; Most all these messages are "posted"
+      Static msgMap := Map(1, "HSHELL_WINDOWCREATED", 2, "HSHELL_WINDOWDESTROYED", 3, "HSHELL_ACTIVATESHELLWINDOW", 4, "HSHELL_WINDOWACTIVATED",
+         5, "HSHELL_GETMINRECT", 6, "HSHELL_REDRAW", 7, "HSHELL_TASKMAN", 8, "HSHELL_LANGUAGE",
+         9, "HSHELL_SYSMENU", 10, "HSHELL_ENDTASK", 11, "HSHELL_ACCESSIBILITYSTATE", 12, "HSHELL_APPCOMMAND",
+         13, "HSHELL_WINDOWREPLACED", 14, "HSHELL_WINDOWREPLACING", 15, "HSHELL_HIGHBIT", 16, "HSHELL_FLASH",
+         17, "HSHELL_RUDEAPPACTIVATED")
+
+      Static pidMap := Map()
+      Static HSHELL_WINDOWCREATED := 1,  ;A top-level, unowned window has been created. The window exists when the system calls this hook.
+         HSHELL_WINDOWDESTROYED := 2,  ;A top-level, unowned window is about to be destroyed. The window still exists when the system calls this hook.
+         HSHELL_ACTIVATESHELLWINDOW := 3,
+         HSHELL_WINDOWACTIVATED := 4,  ;The activation has changed to a different top-level, unowned window.
+         HSHELL_GETMINRECT := 5,
+         HSHELL_REDRAW := 6,
+         HSHELL_TASKMAN := 7,
+         HSHELL_LANGUAGE := 8,
+         HSHELL_SYSMENU := 9,
+         HSHELL_ENDTASK := 10,
+         HSHELL_ACCESSIBILITYSTATE := 11,
+         HSHELL_APPCOMMAND := 12,
+         HSHELL_WINDOWREPLACED := 13,
+         HSHELL_WINDOWREPLACING := 14,
+         HSHELL_HIGHBIT := 15,
+         HSHELL_FLASH := 16,
+         HSHELL_RUDEAPPACTIVATED := 17  ; not sure if this is legit
+      If (hWnd = 0)
+         Return
+
+      Critical 60 ; Slow down speed of sampling in case we have wait events below
+      wParam &= 0xFF ; mask out upper bits
+
+      Switch wParam {
+         Case HSHELL_WINDOWACTIVATED, HSHELL_RUDEAPPACTIVATED, HSHELL_WINDOWCREATED:
+            ; OutputDebug("Checking " wParam " with window class " WinGetClass(lParam) ", pname " WinGetProcessName(lParam))
+
+            ; Ignore UWP Subhost events, they are not valid GUIs and will time out
+            ; They are also created/destroyed when switching desktops
+            ; Also when switching desktops
+            If DontIgnore(hWnd) {
+               ; wait for window to exist before we add it, it may be temporary or never have a real window like UWP sub tasks
+               ; NOTE - We still need this wait for ApplicationFrameHost.exe UWP host apps being created (uncloaked), they need to simmer ~100 to 500 ms ma or so
+               ; normal apps will not wait at all since they should already be created
+               ; Not sure why we need a delay in switching events, maybe a hung app?
+               ; BUG  - some UWP apps will always timeout even if 5 sec used and it is obvious they are up and running
+               ; 4/26/2023 - Allowing wait to timeout but still proceeding
+               iStartTime := A_TickCount
+               ; Try to wait but progress anyway, note if stalled
+               ; UWP apps starting up for the first time in a while will do this
+               ; Note: They don't yet have a title and are cloaked, they do however have a class (ApplicationFrameWindow)
+               ; debug("Test 1 " getClassName(hWnd) ", Cloaked=" IsCloaked(hWnd) ", title=" WinGetTitle(hWnd))
+               If (IsCloaked(hWnd) AND WinWait(hWnd, , 1.0) = 0) {
+                  ; NOTE - UWP Apps like calculator need to settle in before it will pass the isValidShellHookCandidate test below
+                  ;        Other Apps do not, i.e. to become uncloaked
+                  ;        Will transition from cloaked to not clocked
+                  Try debug(msgMap[wParam] " (D) event timeout, window class: " getClassName(hWnd) ", Handle: " hex(hWnd))
+               }
+               ; debug("Test 2 " getClassName(hWnd) ", Cloaked=" IsCloaked(hWnd) ", title=" WinGetTitle(hWnd))
+               ; NOTE - do we sometimes have to check the title check for window creations?
+               ; debug("Check Valid:" wParam ", Class=" WinGetClass(hWnd) ", hWnd=" hWnd ", Cloaked=" IsCloaked(hWnd))
+               If (isValidShellHookCandidate(hWnd)) {
+                  ; debug("Is Valid:" wParam ", Class=" WinGetClass(hWnd) ", hWnd=" hWnd ", Cloaked=" IsCloaked(hWnd))
+                  If ((A_TickCount - iStartTime) > 0)
+                     Try debug(msgMap[wParam] ", Time to wait window class " getClassName(hWnd) " is " A_TickCount - iStartTime " ms, title=" WinGetTitle(hWnd))
+                  ; Remove the instance that may already be in there
+                  this.RemoveHandle(hWnd)
+                  ; Adds to the top of the queue
+                  this.PushHandle(hWnd)
+                  this.PruneDeadHandles()
+                  If (wParam == HSHELL_WINDOWACTIVATED) {
+                     ; Cache the icon after a bit, in some UWP cases the window will be destroyed by the time the timer is called
+                     ; TODO - is waiting critical? Can we also do this on window create?
+                     If ( not this.handleCache.Has(hWnd)) {
+                        ; debug("Setting Timer for " getClassName(hWnd) " " hex(hWnd) )
+                        fn := this.getMyIcon.Bind(this, hWnd)
+                        SetTimer(fn, -100)
+                     }
+                  }
+                  ; this.flag := true
+               } Else If (WinExist(hWnd) AND (A_TickCount - iStartTime) > 0) {
+                  ; Some UWP apps startup/shutdown windows (like Sticky notes) so they may be gone or cloacked by this time
+                  debug("Invalid ShellHookCandidate wait, Event=" msgMap[wParam] ", Time to wait for window " hex(hWnd) " is " A_TickCount - iStartTime " ms, Class=" getClassName(hWnd) ", Cloaked=" IsCloaked(hWnd))
+               }
+            }
+         Case HSHELL_WINDOWDESTROYED:
+            ; Window is ABOUT TO BE destroyed at this point but may trigger an error when checking class
+            If (this.RemoveHandle(hWnd)) {
+               ;OutputDebug("AHK Window Destroyed for:" lParam ", wParam=" wParam)
+               this.PruneDeadHandles()
+            }
+            this.clearIconHandle(hWnd)
+            ; Ignore these, they happen alot
+         Default:
+            ; OutputDebug("Default wParam=" . wParam . ", lParam=" . hx(hWnd))
+      }
+      Critical "off"
+      Return
+   }
+   ;----------------------------------------------------------------------------
+   ; Initially populate the list of windows with those from this desktop and other desktops
+   ;----------------------------------------------------------------------------
+   InitHook_Order() {
+      EnumAddress := CallbackCreate(EnumWindowsProc, "Fast")  ; Fast-mode is okay because it will be called only from this thread.
+      DllCall("EnumWindows", "Ptr", EnumAddress, "Int")
+      CallbackFree(EnumAddress)
+      Return
+
+      EnumWindowsProc(hWnd, lParam) {
+         ; changed isValidShellHookCandidate to allow cloaked windows on different desktops to be considered
+
+         If (isValidShellHookCandidate(hWnd)) {
+            If (this.pushUnique(hWnd))   ; bottom of the list
+               this.HashChildren(hWnd)
+            this.getMyIcon(hWnd)
+         }
+         Return true  ; Tell EnumWindows() to continue until all windows have been enumerated.
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Push a new entry at the top of the list and hash children if needed
+   ;----------------------------------------------------------------------------
+   PushHandle(hwnd,where:=1) {
+      this.arrayHookOrder.InsertAt(where, hwnd)
+      this.HashChildren(hwnd)
+      Return 0
+   }
+   ;----------------------------------------------------------------------
+   ; Known class that will have children
+   ;----------------------------------------------------------------------
+   HashChildren(hwnd) {
+      If (WinExist("ahk_group ChildWindowClass ahk_id " hwnd)) {
+         this.arrayTasks := Array()
+         EnumChildWindows(hwnd, this.CWCB, 1)
+         If (this.arrayTasks.Length > 0) {
+            this.mapHookChildren.set(hwnd, this.arrayTasks.Clone())
+            ;debug("Pushed " this.arrayTasks.Length " Items to child list")
+         }
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Push a unique handle to the queue
+   ; Locked windows on all desktops will show up multiple times
+   ;----------------------------------------------------------------------------
+   pushUnique(lParam) {
+      For hwnd in this.arrayHookOrder {
+         If (hwnd = lParam) {
+            Return 0
+         }
+      }
+      this.arrayHookOrder.Push(lParam)   ; bottom of the list
+      Return 1
+   }
+
+   ;----------------------------------------------------------------------------
+   ; Remove one entry from the array by looping through it (not associative)
+   ; TODO - Would be nice not to have to loop Array each time to find it (or not)
+   ; Maps are not ordered and arrays aren't hashed
+   ; TODO - windows dictionary does remain ordered
+   ;----------------------------------------------------------------------------
+   RemoveHandle(lParam) {
+      For index, hwnd in this.arrayHookOrder {
+         If (hwnd = lParam) {
+            this.arrayHookOrder.RemoveAt(index)
+            ;OutputDebug("Removed hWnd " lParam " at index " index)
+            If (this.mapHookChildren.Has(hwnd)) {
+               this.mapHookChildren[hwnd] := ""   ;empty array
+               this.mapHookChildren.Delete(hwnd)
+               ;OutputDebug("Pruning TL and Children" this.getPath(hwnd))
+            }
+            Return index
+         }
+      }
+      Return 0
+   }
+   ;----------------------------------------------------------------------------
+   ; Replace any parents with their children
+   ; NOTE - this is called each time the gui is posted, is it efficient?
+   ;----------------------------------------------------------------------------
+   ReplaceWithChildren() {
+      index := 0
+      While (++index <= this.arrayTasks.Length) {
+         hwnd := this.arrayTasks[index]
+         If (WinExist(hwnd)) {
+            ; If parent has children replace the parent with them
+            ; Only MS Project and Visio for now would have this
+            If (this.mapHookChildren.Has(hwnd)) {
+               this.arrayTasks.RemoveAt(index--)
+               For i, chwnd in this.mapHookChildren[hwnd] {
+                  ; One of the children may have been deleted in the interim
+                  If (WinExist(chwnd)) {
+                     this.arrayTasks.InsertAt(++index, chwnd)
+                  } Else {
+                     ; should delete the mapHookChildren array element entry but may break loop
+                     ; if more than one child dies (which shouldn't happen)
+                     debug("Pruning closed child window at index " i)
+                     this.mapHookChildren[hwnd].RemoveAt(i)
+                  }
+               }
+            }
+         } Else {
+            ; Window didn't exist, remove it
+            ; can happen after init grabs tool windows that aren't monitored
+            warning("Removing extraneous closed window at index " index)
+            this.arrayTasks.RemoveAt(index--)
+            If (this.mapHookChildren.Has(hwnd)) {
+               this.mapHookChildren[hwnd] := ""   ;empty array
+               this.mapHookChildren.Delete(hwnd)
+            }
+         }
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Mostly for launching apps from start menu, want the search and start menu
+   ; to be pruned out. Could also filter coming in by class or something
+   ; Class=Windows.UI.Core.CoreWindow
+   ; May no longer be necessary since we filter out the start menu phantom apps
+   ;----------------------------------------------------------------------------
+   PruneDeadHandles() {
+      ; index++ := this.arrayHookOrder.Length   ; 2.1 Alpha doesn't work
+      index := this.arrayHookOrder.Length + 1
+      While (--index) {
+         hwnd := this.arrayHookOrder[index]
+         If (!WinExist(hwnd)) {
+            this.arrayHookOrder.RemoveAt(index)
+
+            If (this.mapHookChildren.Has(hwnd)) {
+               this.mapHookChildren[hwnd] := ""   ;empty array
+               this.mapHookChildren.Delete(hwnd)
+               debug("Pruning Parent and Children Window for " hx(hwnd))
+            } Else {
+               debug("Pruning Parent Window " hx(hwnd))
+            }
+         }
+      }
+      Return index
+   }
+}
+;----------------------------------------------------------------------
+; Determine if the window is one which would be shown in an Alt-Tab list
+; Call with DetectHiddenWindows  = 1 if you want to flag InvalidCandidates on different virtual desktops
+; NOTE - we have an option to skip the initial checks when window is forming
+;----------------------------------------------------------------------
+isValidShellHookCandidate(hWnd, skipDetail := false) {
+
+   ; As long as we use pure (integer hWnd) parameters, we don't need DetectHiddenWindows, but if we use "ahk_id" we do need it
+   ; hw:= DetectHiddenWindows(1)
+
+   ; Window may be gone by the time we get here
+   ; IsWindow(hWnd) -> WinExist, WinExist works with hidden windows using (hWnd) as a parameter vs ("ahk_id " hWnd)
+   If (WinExist(hWnd)) {
+      es := WinGetExStyle(hWnd)
+      st := WinGetStyle(hWnd)
+      st |= skipDetail ? WS_VISIBLE : 0
+      ; Verify this is a valid Alt-Tab window
+      ; Check order is less likely to more likely to speed things up
+      ; Order check is important, can't just blindly mask bits
+      StyleOk := !(st & WS_VISIBLE) ? false
+         : (es & WS_EX_NOACTIVATE) ? false
+            : (st & WS_DISABLED) ? false
+            : (es & WS_EX_APPWINDOW) ? true
+            : (es & WS_EX_TOOLWINDOW) ? false
+            : true
+      ; debug(hex(hWnd) " " StyleOk " " GetParent(hWnd) " " NotCloaked(hWnd))
+      res := (
+         StyleOk	; Exclude ones with styles indicating not a valid toplevel
+         AND DontIgnore(hWnd)	; MDI Clients, desktop, start menu related (search), Host UWP on other desktops
+         AND (skipDetail OR winHasTitle(hWnd))	; Ignore windows with no title
+         AND GetParent(hWnd) = 0	; Ignore non-parent (use only top-level windows) windows  (use isPrimaryOwner??)
+         ; UWP host apps OR legit apps on a different desktop are both cloaked
+         AND (skipDetail OR NotCloaked(hWnd) OR !vda.DtOnCurrent(hWnd))  ; needed for raw enum or shellhook, not needed for WinList
+         ; Exclude start window artifcats or any MDI Clients that are replaced and UWP CoreWindow windows
+         ; Needs DetectHiddenWindows enabled to be seen by WinExist
+         ; NOTE - WinExists fails to reject hidden or cloaked windows if DetectHiddenWindows isn't used
+         ; The two methods below are both equally fast
+         ; AND not WinExist("ahk_group InvalidCandidate ahk_id " hWnd)	; MDI Clients, desktop, start menu related (search), Host UWP on other desktops
+      )
+   } Else {
+      res := false
+   }
+   ; DetectHiddenWindows(hw)
+   Return res
+}
+
+dlog("Include File Loaded")

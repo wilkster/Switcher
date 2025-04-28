@@ -1,0 +1,69 @@
+#Requires AutoHotkey >= v2.1-alpha.4
+#include Structures.ahk2            ; Common structures used in 2.1 Alpha
+#Include dllFactory.ahk2
+;----------------------------------------------------------------------
+; Class to determine if the mouse is hovering over one of the trays
+; works even if tray is hidden by another window
+;----------------------------------------------------------------------
+
+Class TrayCheck {
+   ; NOTE - https://www.autohotkey.com/docs/alpha/Structs.htm
+   Static RECTpTray := stRECT()
+   Static RECTsTray := stRECT()
+   Static pHas := 0, sHas := 0
+   ; Cache the addresses
+   Static GetCursorPos := GetModHandle("GetCursorPos", "User32.dll")
+   Static PtInRect := GetModHandle("PtInRect", "User32.dll")
+   Static SetThreadDpiAwarenessContext := GetModHandle("SetThreadDpiAwarenessContext", "User32.dll")
+   ; Global defDPIContext
+
+   ; Save the rectangles for the primary and possiby secondary tray areas
+   Static __New() {
+      Global defDPIContext
+      ; NOTE - Since whichTray is in DPI Awareness system, temporarly make it that here to save the rectangles
+      ; InflateRect can adjust the size of a rect
+      ; MonitorFromRect to get monitor handle for some rect
+      ; GetMonitorInfo to get monitor info based on a handle
+      ; CopyRect to clone a rect
+      /*
+      TODO
+      - Split rectangles into left and right sections
+      - function to return which side the mouse is over
+      - Is DllCall.bind method as fast? It is cleaner code.
+      */
+      dpiContext := DllCall("user32.dll\GetThreadDpiAwarenessContext", "Ptr")
+      ; debug("Default awareness=" defDPIContext " " dpiContext)
+      DllCall(this.SetThreadDpiAwarenessContext, "Ptr", defDPIContext, "Ptr")
+      ; NOTE - Shell_TrayWnd may not be the primary monitor if the taskbars are switched
+      If (hWnd := WinExist("ahk_class Shell_TrayWnd")) {
+         this.pHas := DllCall("GetWindowRect", "Ptr", hWnd, "Ptr", this.RECTpTray, "UInt")
+      }
+      If (hWnd := WinExist("ahk_class Shell_SecondaryTrayWnd")) {
+         this.sHas := DllCall("GetWindowRect", "Ptr", hWnd, "Ptr", this.RECTsTray, "UInt")
+      }
+      DllCall(this.SetThreadDpiAwarenessContext, "Ptr", dpiContext, "Ptr")
+      dLog("Tray Check Static Instance Initialized")
+   }
+
+   ; Return which tray (if any) the mouse is currently over, even if tray is ocluded by another window
+   ; NOTE - Since this is a HOTIF check it runs with default DPI Awareness (not sure why, same thread)
+   ; TODO - allow the tray to be split left/right or up/down so we can volume and brightness controls
+   Static overTrayArea() {
+      ; Grab Mouse Position
+      DllCall(this.GetCursorPos, "uint64*", &POINT := 0)
+      ; Check if mouse is over either of the tray rectangles
+      Return (this.pHas AND DllCall(this.PtInRect, "Ptr", this.RECTpTray, "Int64", POINT, "Uint"))
+          OR (this.sHas AND DllCall(this.PtInRect, "Ptr", this.RECTsTray, "Int64", POINT, "Uint"))
+   }
+}
+
+;----------------------------------------------------------------------------
+; Return true if the mouse is over the desktop or taskbar
+; NOTE - fails if a screen is over the taskbar, need better check above
+;----------------------------------------------------------------------------
+; OverTaskbar() {
+;    ; Return CursorCheck.whichTray()
+;    MouseGetPos(, , &window_id) ; slower of the two due to windows calls
+;    Return WinExist("ahk_Group TaskBar ahk_id " window_id)  ; very fast
+; }
+dlog("Include File Loaded")

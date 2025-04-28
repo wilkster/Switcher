@@ -1,0 +1,171 @@
+;----------------------------------------------------------------------------
+; Stopwatch class for timing routines
+;----------------------------------------------------------------------------
+#Include dllFactory.ahk2            ; Common files, mostly dllcall window related
+
+class clsStopWatch {
+   freq := 0
+   CounterBefore := 0
+   CounterStart := 0
+   CounterLapStart := 0
+   state :=-1
+   lapTime := 0
+   cumTime := 0
+   __new() {
+      freq := -1
+      this.qfc := DllCall("GetModuleHandle", "str", "Kernel32.dll\QueryPerformanceCounter", "ptr")
+      DllCall("QueryPerformanceFrequency", "Int64*", &freq)
+      this.freq := freq
+   }
+   __delete() {
+      dlog("Closing clsStopWatch")
+   }
+   ; start the timer, reset any lap times
+   start() {
+      nowt := -1
+      DllCall(this.qfc, "Int64*", &nowt)
+      this.CounterStart := nowt
+      this.CounterLapStart := nowt
+      this.state := 1
+      this.lapTime := round((nowt - this.CounterLapStart) / this.freq * 1000.0,5)
+      return 1
+   }
+   ; Time since start or last lap
+   lapText(txt, th := 0) {
+      nowt := this.update(0)
+      if (this.lapTime >= th) {
+         if (th > 0) {
+            OutputDebug("AHK2 lap:" txt " took longer than " th " ms, t=" this.lapTime " ms (cum=" this.cumTime " ms)")
+         } else {
+            OutputDebug("AHK2 lap:" txt ", t=" this.lapTime " ms (cum=" this.cumTime " ms)")
+         }
+      } else {
+        OutputDebug("AHK2 lap: Negative time has passed " this.lapTime " " th)
+      }
+      ; reset lap
+      this.CounterLapStart := nowt
+      return 1
+   }
+   cumText(txt, th := 0) {
+      nowt := this.update(0)
+      if (this.cumTime > th) {
+         if (th > 0) {
+            OutputDebug("AHK2 cum:" txt " took longer than " th " ms, t=" this.cumTime " ms)")
+         } else {
+            OutputDebug("AHK2 cum:" txt ", t=" this.cumTime " ms)")
+         }
+      }
+      ; reset lap
+      this.CounterLapStart := nowt
+      return this.lapTime
+   }
+   update(resetLap:=0) {
+      nowt := -1
+      if (this.state != 1)
+         this.start()
+      DllCall(this.qfc, "Int64*", &nowt)
+      this.cumTime := round((nowt - this.CounterStart) / this.freq * 1000.0,5)
+      this.lapTime := round((nowt - this.CounterLapStart) / this.freq * 1000.0,5)
+      if (resetLap) {
+         this.CounterLapStart := nowt
+      }
+      return nowt
+   }
+   startlap() {
+      this.update(1)
+      return this.cumTime
+   }
+   getLap() {
+      this.update()
+      return this.lapTime
+   }
+   cumTimeVal() {
+      this.update()
+      return this.cumTime
+   }
+}
+
+;----------------------------------------------------------------------------
+; Stopwatch class for timing routines
+;----------------------------------------------------------------------------
+
+class StopWatch {
+   Static freq := 0
+   Static CounterBefore := 0
+   Static CounterStart := 0
+   Static CounterLapStart := 0
+   Static state :=-1
+   Static lapTime := 0
+   Static cumTime := 0
+   Static __new() {
+      DllCall("QueryPerformanceFrequency", "Int64*", &freq:=-1)
+      this.freq := freq
+   }
+   Static __delete() {
+      OutputDebug("Closing clsStopWatch")
+   }
+   ; start the timer, reset any lap times
+   Static Start() {
+      nowt := -1
+      DllCall("Kernel32.dll\QueryPerformanceCounter", "Int64*", &nowt)
+      this.CounterStart    := nowt
+      this.CounterLapStart := nowt
+      this.state           := 1
+      this.lapTime         := round((nowt - this.CounterLapStart) / this.freq * 1000.0,5)
+      return 1
+   }
+   ; Time since start or last lap
+   Static lapText(txt, th := 0) {
+      nowt := this.update(0)
+      if (this.lapTime >= th) {
+         if (th > 0) {
+            OutputDebug("AHK2 lap:" txt " took longer than " th " ms, t=" this.lapTime " ms (cum=" this.cumTime " ms)")
+         } else {
+            OutputDebug("AHK2 lap:" txt ", t=" this.lapTime " ms (cum=" this.cumTime " ms)")
+         }
+      } else {
+        OutputDebug("AHK2 lap: Negative time has passed " this.lapTime " " th)
+      }
+      ; reset lap
+      this.CounterLapStart := nowt
+      return 1
+   }
+   Static cumText(txt, th := 0) {
+      nowt := this.update(0)
+      if (this.cumTime > th) {
+         if (th > 0) {
+            OutputDebug("AHK2 cum:" txt " took longer than " th " ms, t=" this.cumTime " ms)")
+         } else {
+            OutputDebug("AHK2 cum:" txt ", t=" this.cumTime " ms)")
+         }
+      }
+      ; reset lap
+      this.CounterLapStart := nowt
+      return this.lapTime
+   }
+   Static update(resetLap:=0) {
+      nowt := -1
+      if (this.state != 1)
+         this.start()
+      DllCall("Kernel32.dll\QueryPerformanceCounter", "Int64*", &nowt)
+      this.cumTime := round((nowt - this.CounterStart) / this.freq * 1000.0,5)
+      this.lapTime := round((nowt - this.CounterLapStart) / this.freq * 1000.0,5)
+      if (resetLap) {
+         this.CounterLapStart := nowt
+      }
+      return nowt
+   }
+   Static startlap() {
+      this.update(1)
+      return this.cumTime
+   }
+   Static getLap() {
+      this.update()
+      return this.lapTime
+   }
+   Static cumTimeVal() {
+      this.update()
+      return this.cumTime
+   }
+}
+

@@ -1,0 +1,266 @@
+; =====================================================================
+; # - Windows Logo Key
+; ! - Alt Key
+; ^ - Control Key
+; + - Shift Key
+; & - Combine keys (held down at the same time) into a single hot key
+; NOTE - Run Elevated if we want to work over Task Manager/Event Viewer/Task Scheduler
+; =====================================================================
+;A_IconTip := "Tom's AHK Tools Version " A_AhkVersion ", running on " A_ComputerName
+;TraySetIcon(A_ScriptDir "\Icons\TomsAHK.ico")
+;
+#Requires AutoHotkey >= v2.1-alpha.4
+dlog(A_ScriptName ": Loading Autohotkey Version " A_AhkVersion " on " A_ComputerName)
+A_MaxHotkeysPerInterval := 99000000
+A_HotkeyInterval := 99000000
+#SingleInstance
+#Warn All, OutputDebug
+#ClipboardTimeout 3000  ; Default is 1000
+/*
+   Docs - DllFile may be omitted when calling a function that resides in User32.dll, Kernel32.dll, ComCtl32.dll, or Gdi32.dll
+*/
+#DllLoad "DWMAPI.dll"
+#DllLoad "NTDLL.dll"
+Suspend(1)
+;----------------------------------------------------
+;https://autohotkey.com/boards/viewtopic.php?t=6413
+;----------------------------------------------------
+KeyHistory(100)               ; Added 10/2021
+ListLines(0)                ; disable logging of keys
+ProcessSetPriority("A")     ; Above normal priority
+SetMouseDelay(-1)           ; don't sleep on mouse movements
+SetKeyDelay(-1, -1)         ; don't sleep on key strokes, added second on 3/9/2020
+SetDefaultMouseSpeed(0)     ; move mouse instantly
+SetWinDelay(0)              ; Sets the delay that will occur after each windowing function, minimal but not -1
+SetControlDelay(-1)         ; Sets the delay that will occur after each control-modifying function.
+SendMode("Input")           ; uses the SendInput method for Send, SendText, Click, and MouseMove/Click/Drag
+SetTitleMatchMode(2)        ; match anywhere in text, used for VBA stuff
+DetectHiddenWindows(0)      ; needed to check if pop-up gui is hidden or not
+DetectHiddenText(0)         ; Not sure why this is set
+; I am handling DPI per window for the GUI
+Global defDPIContext := DllCall("user32.dll\GetThreadDpiAwarenessContext", "Ptr")
+Global A_OSVer       := StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
+
+DllCall("SetThreadDpiAwarenessContext", "Ptr", -4, "Ptr")
+; Want dark menus if dark mode set
+alignWithDarkMode()
+OnExit ExitHandler
+
+; =====================================================================
+;                          I N C L U D E S
+; =====================================================================
+; Switcher related files
+#Include %A_ScriptDir%\Lib               ; Set Lib folder
+#Include ..\Common\dllFactory.ahk2       ; Various system calls
+#Include ..\Common\WindowFunctions.ahk2  ; Windowing related functions
+#Include ..\Common\classTrayCheck.ahk2
+; Switcher Unique libraries
+#Include vda.ahk2                        ; virtual desktop accessor wrapper
+#Include classTaskViewSH.ahk2            ; Class for tracking and providing list of active windows
+#Include classDesktopMonitor.ahk2        ; Class to track desktop changes and update tray icon accordingly
+#Include windowToKey.ahk2                ; Bind keypad keys to windows
+#Include classGuiView.ahk2               ; Alt-Tab replacement GUI
+#Include UWPFunctions.ahk2               ; Functions related to UWP apps
+dlog("All Include Files Loaded")
+
+; =====================================================================
+;                          G L O B A L  O B J E C T S
+; =====================================================================
+; Super globals to hold needed class instances for task switching
+; key assigments will happen before these classes complete initialization
+; Global stopwatch      := clsStopWatch()                              ; utility for measuring time accuratly
+Global taskObject     := clsTaskView()                              ; Tracks all of the active windows
+Global keyPadAssigner := windowToKey(taskObject)                     ; Assign keys to windows
+Global guiObject      := clsTaskGUI(taskObject, keyPadAssigner)      ; Main alt-tab replacement class
+Global desktopTracker := clsDesktopMonitor()                         ; tracks the active desktop
+dlog("Global Objects Created")
+;----------------------------------------------------------------------
+; Clean up objects created above best as possible
+;----------------------------------------------------------------------
+ExitHandler(ExitReason, ExitCode) {
+   Global
+   desktopTracker.__delete()
+   desktopTracker.__delete()
+   guiObject.__delete()
+   keyPadAssigner.__delete()
+   taskObject.__delete()
+   dlog("Exiting Autohotkey, ExitReason=" ExitReason ", ExitCode=" ExitCode)
+}
+
+; =====================================================================
+;                          G R O U P S
+; =====================================================================
+;-------------------------------------------------------------------------
+; PanApps are those that need native mouse middle button switch for
+; panning/moving
+;-------------------------------------------------------------------------
+GroupAdd("PanApps", "ahk_exe SketchUp.exe")
+GroupAdd("PanApps", "ahk_exe googleearth.exe")
+;-------------------------------------------------------------------------
+; Used for task Non-MDI Window Swtich - Ctrl-Tab interface
+; Uses app hotkeys to swap windows vs. the windows API
+;-------------------------------------------------------------------------
+GroupAdd("CTMClass", "ahk_class IEFrame")
+GroupAdd("CTMClass", "ahk_class Chrome_WidgetWin_1")
+GroupAdd("CTMClass", "ahk_class AcrobatSDIWindow")
+
+;-------------------------------------------------------------------------
+; Taskbar or Desktop
+;-------------------------------------------------------------------------
+GroupAdd("TaskBar", "ahk_class Shell_TrayWnd")
+GroupAdd("TaskBar", "ahk_class Shell_SecondaryTrayWnd")
+; GroupAdd("TaskBar", "ahk_class WorkerW")
+;-------------------------------------------------------------------------
+; Chrome with tab switcher installed
+;-------------------------------------------------------------------------
+GroupAdd("ChromeExt", "ahk_exe chrome.exe")
+GroupAdd("ChromeExt", "ahk_exe msedge.exe")
+;====================================================================
+;After the script has been loaded, it begins executing at the top line, continuing until a Return,
+;Exit, hotkey/hotstring label, or the physical end of the script is encountered
+;(whichever comes first). This top portion of the script is referred to as the auto-execute section.
+;====================================================================
+;            K E Y   A S S I G N M E N T S
+;====================================================================
+;==================== S W I T C H E R   R E L A T E D =========================
+;--------------------------------------------------
+; Active Tasks List
+;--------------------------------------------------
+; RAlt:: buildTaskGUI(0, 0)
+
+;-------------------------------------------------------------------------
+; Alt-Tab Replacement
+; Won't work on hung windows (native key kicks in)
+;-------------------------------------------------------------------------
+; #HotIf A_ComputerName != "Pika"
+!Tab::
++!Tab:: {
+   processAltTab()
+}
+; #HotIf
+
+; This even works on hung windows
+;!p::swapPrevTask()
+;----------------------------------------------------------------------------
+; Swap to previous window
+; "Release" of the wheel cannot be detected by any means, since such an action is not physically possible with an actual wheel.
+; Since mouse wheel hotkeys generate only down-events (never up-events), they cannot be used as key-up hotkeys.
+; If the tray/desktop is active and mouse is over it, let the scroll wheel toggle desktops
+;----------------------------------------------------------------------------
+WheelRight:: {
+   If (TrayCheck.overTrayArea()) {
+      goRight()
+   } Else {
+      If ( not isRepeat(300)) {
+         swapPrevSibling(1)
+      }
+   }
+}
+WheelLeft:: {
+   If (TrayCheck.overTrayArea()) {
+      goLeft()
+   } Else {
+      smartWheelLeft()
+   }
+}
+;----------------------------------------------------------------------
+; Win 11 VDA corrupts taskbar
+;----------------------------------------------------------------------
+goRight() {
+   If (A_OSVer > 10) {
+      If vda.DtCurrent = (vda.DtCount - 1)
+         Send("^#{Left}")
+      Else
+         Send("^#{Right}")
+   } Else {
+      vda.DtNextDesktop(1)
+      Sleep(200)
+   }
+}
+;----------------------------------------------------------------------
+; Win 11 VDA corrupts taskbar
+;----------------------------------------------------------------------
+goLeft() {
+   If (A_OSVer > 10) {
+      If vda.DtCurrent = 0
+         Send("^#{Right}")
+      Else
+         Send("^#{Left}")
+   } Else {
+      vda.DtPrevDesktop(1)
+      Sleep(200)
+   }
+}
+;----------------------------------------------------------------------------
+; Desktop switching
+;----------------------------------------------------------------------------
+^WheelLeft:: {
+   goLeft()
+}
+^WheelRight:: {
+   goRight()
+}
+;----------------------------------------------------------------------------
+; Smart about when the wheel=left action is called, gui dependent
+;----------------------------------------------------------------------------
+smartWheelLeft() {
+   ; We want to igore these case if the gui is up
+   If (guiObject.Active) {
+      ; Not a repeat or different hotkey
+      ; A_TimeSincePriorHotkey > 400 OR A_ThisHotkey != A_PriorHotkey
+      If ( not isRepeat(400))
+         buildTaskGUI(0)  ; close menu if a new click and not a repeat
+   } Else {
+      ; If wheel held down (repeat), then put up menu otherwise swap tasks
+      If (isRepeat(200)) {
+         buildTaskGUI(0)
+      } Else {
+         swapPrevTask()
+      }
+   }
+}
+
+;----------------------------------------------------------------------------
+; Special Mouse Functions for side buttons on some mice
+;----------------------------------------------------------------------------
+#HotIf !WinActive("ahk_group PanApps")
+   ;----------------------------------------------------
+   ; Remap side mouse keys for for task/window switch
+   ; Mouse left buttons
+   ;----------------------------------------------------
+   ; Task list at current mouse locatioin
+   XButton1:: buildTaskGUI(0)
+   ; child/sibling list at current mouse location
+   XButton2:: buildTaskGUI(1)
+#HotIf
+
+
+;========================================================================================================
+; Task View Items
+;========================================================================================================
+swapPrevTask() {
+   If (IsObject(taskObject))
+      taskObject.swapPrevTask()
+}
+swapPrevSibling(Direction := 1) {
+   If (IsObject(taskObject))
+      taskObject.swapPrevSibling(Direction)
+}
+
+
+;==================== E N D   S W I T C H E R   R E L A T E D =========================
+
+;----------------------------------------------------------------------
+; Reload this instance
+;----------------------------------------------------------------------
+^!=:: {
+   SoundBeep(900, 80)
+   Reload
+   Sleep(500)
+   ; If reload failed it will pass thru here
+   SoundBeep(600, 200)
+}
+
+Suspend(0)
+
+dlog(A_ScriptName " is Ready for Processing")

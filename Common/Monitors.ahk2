@@ -1,0 +1,582 @@
+;----------------------------------------------------------------------------
+; Monitor Information
+;----------------------------------------------------------------------------
+#Include Constants.ahk2
+#Include dllFactory.ahk2            ; Common files, mostly dllcall window related
+#Include Structures.ahk2            ; Data Structures
+#DllLoad "Dxva2.dll"
+#DllLoad "Shcore.dll"
+
+Class monInfo {
+   Static mnInfoHash     := Map() ; save copy of last monitor scan
+   Static activeMonitor  := 0
+   Static DPI            := 096
+   Static MonCount       := 0
+   Static Ratio          := 1
+   Static X              := 0
+   Static Y              := 0
+   Static Left           := 0
+   Static Right          := 0
+   Static Top            := 0
+   Static Bottom         := 0
+   Static Width          := 0
+   Static Height         := 0
+   Static WIN_MIN        := -1
+   Static WIN_NORMAL     := 0
+   Static WIN_MAX        := 1
+   Static WIN_FS         := 2     ; My Forced Full Screen
+   Static WIN_CFS        := 3    ; Chrome Full Screen
+   Static cbEnumMonitors := CallbackCreate(this.MonitorEnumProc.bind(this), "Fast", 4)
+
+   Static __new() {
+      this._monLocations()
+   }
+   Static __delete() {
+      CallbackFree(this.cbEnumMonitors)
+   }
+   ;----------------------------------------------------------------------------
+   ; Enum the monitors to capture their relative locations and other info
+   ; monInfo.mnInfoHash contains all of the data
+   ;----------------------------------------------------------------------------
+   Static _monLocations() {
+      this.mnInfoHash.Clear()
+      DllCall("User32\EnumDisplayMonitors", "Ptr", 0, "Ptr", 0, "Ptr", this.cbEnumMonitors, "Uint", 0)
+      this.MonCount := this.mnInfoHash.Count
+      Return this.MonCount
+   }
+   ;----------------------------------------------------------------------------
+   ; Enumerator for the monitor enum callback
+   ; Gather relavent info for each attached monitor
+   ; Gets data on disconnected monitors as well
+   ; TODO - add Index starting at 1 as that is how AHK does it.
+   ;----------------------------------------------------------------------------
+   Static MonitorEnumProc(hMonitor, hDC, pRECT, userParam) {
+      Static MDT_EFFECTIVE_DPI := 0
+      Static stDispInfo        := stDISPLAY_DEVICE()
+      Static stMonInfo         := stMONITORINFOEX()
+      Static GetMonitorInfo    := GetModHandle("GetMonitorInfoW", "User32.dll")
+      Static GetDpiForMonitor  := GetModHandle("GetDpiForMonitor", "Shcore.dll")
+
+      ; Get upper left/top coordinates for each monitor
+      ; Used to compare relative position of monitors
+      ; This should start with the primary monitor and work out
+      If (DllCall(GetMonitorInfo, "ptr", hMonitor, "ptr", stMonInfo)) {
+         mnInfo := Object()
+         ; Need to compare monitor locations
+         mnInfo.mLeft   := stMonInfo.rcMonitor.left
+         mnInfo.mTop    := stMonInfo.rcMonitor.top
+         mnInfo.mRight  := stMonInfo.rcMonitor.right
+         mnInfo.mBottom := stMonInfo.rcMonitor.bottom
+         mnInfo.mWidth  := stMonInfo.rcMonitor.Width  ; mnInfo.mLeft - mnInfo.mRight
+         mnInfo.mHeight := stMonInfo.rcMonitor.Height ; mnInfo.mTop - mnInfo.mBottom
+         mnInfo.Handle  := hMonitor
+         ; Additional Information, work area information
+         mnInfo.Left   := stMonInfo.rcWork.left
+         mnInfo.Top    := stMonInfo.rcWork.top
+         mnInfo.Right  := stMonInfo.rcWork.right
+         mnInfo.Bottom := stMonInfo.rcWork.bottom
+         mnInfo.Width  := stMonInfo.rcWork.Width   ; (mnInfo.Right - mnInfo.Left)
+         mnInfo.Height := stMonInfo.rcWork.Height  ;(mnInfo.Bottom - mnInfo.Top)
+         ; mnInfo.Pixels := (mnInfo.Width) * (mnInfo.Height)
+         Name          := stMonInfo.name
+         ; Name           = \\.\DISPLAY1 -> 1, same as stDISPLAY_DEVICE.DeviceName
+         mnInfo.Index  := RegExReplace(Name, ".*(\d+)$", "$1")
+         ; Get the real DPI of this monitor, used to set icon/font size during launch
+         DllCall(GetDpiForMonitor, "Ptr", hMonitor, "UInt", MDT_EFFECTIVE_DPI, "Ptr*", &dpiX := 0, "Ptr*", &dpiY := 0)
+         mnInfo.DPI := Round(Sqrt(dpiX * dpiY))
+         ; Dynamic rato/scale (used to scale margin)
+         mnInfo.ratio := mnInfo.DPI / A_ScreenDPI
+
+         this.mnInfoHash[hMonitor] := mnInfo
+
+      } Else {
+         warning("Error Getting Monitor Info for " hex(hMonitor))
+      }
+      Return true ; continue iteration
+      ; Update the internal hash of monitor information object
+   }
+
+   ;----------------------------------------------------------------------------
+   ; Return active monitor metrics and mouse location
+   ; Call this before most of the other functions
+   ;----------------------------------------------------------------------------
+   Static activeMonDetails(useMouse := 1) {
+      ; Make sure monitor info is up to date
+      If (useMouse) {
+         CoordMode("Mouse", "Screen")
+         MouseGetPos(&Mx, &My, &mHwnd)	; raw pixels
+      } Else {
+         Mx := My := 0	; primary monitor is always 0,0 for upper left corner
+      }
+      ; Cursor related
+      this.X := Mx
+      this.Y := My
+      ; Get Monitor under cursor pack a POINT structure
+      point := (Mx & 0xFFFFFFFF) | (My << 32)
+      hMonitor := DllCall("MonitorFromPoint", "Int64", point, "UInt", 0, "Ptr")
+      ; Refresh all monitor information
+      this._monLocations()
+      ; Update this class instance with active monitor information
+      mnInfo := this.mnInfoHash[hMonitor]
+      ; Public properties
+      ; Save key information into the class static info
+      this.Ratio         := mnInfo.ratio
+      this.activeMonitor := mnInfo.Handle
+      this.DPI           := mnInfo.DPI
+
+      ; These are work areas not overall monitor
+      this.Top    := mnInfo.Top
+      this.Bottom := mnInfo.Bottom
+      this.Left   := mnInfo.Left
+      this.Right  := mnInfo.Right
+      this.Height := mnInfo.Height
+      this.Width  := mnInfo.Width
+
+      Return 1
+   }
+
+   ;----------------------------------------------------------------------------
+   ; Return the handle for the monitor under the current mouse cursor
+   ; Returns 0,1,2 ... based on monitor ID
+   ;----------------------------------------------------------------------------
+   Static getMonitorUnderMouse() {
+      ; NOTE - using module handle is about 10% faster, but bot are 10us per dual call
+      Static GetCursorPos := GetModHandle("GetCursorPos", "User32.dll")
+      Static MonitorFromPoint := GetModHandle("MonitorFromPoint", "User32.dll")
+
+      DllCall(GetCursorPos, "uint64*", &POINT := 0)
+      hMon := DllCall(MonitorFromPoint, "int64", POINT, "uint", 0)   ; flag to return primary monitor on failure
+      Return hMon
+   }
+   ;----------------------------------------------------------------------
+   ;  Get the Monitor ID (handle) of the monitor containing the specified window
+   ;----------------------------------------------------------------------
+   Static MonitorNearWindow(hWnd) {
+      Static MONITOR_DEFAULTTONEAREST := 0x00000002
+      Static MonitorFromWindow := GetModHandle("MonitorFromWindow", "User32.dll")
+      ; returns the handle to the monitor,
+      Return DllCall(MonitorFromWindow, "Ptr", hWnd, "Uint64", MONITOR_DEFAULTTONEAREST)
+   }
+   ;----------------------------------------------------------------------
+   ; Destroy a handle when done with it
+   ;----------------------------------------------------------------------
+   ; Static DestroyPhysicalMonitor(handle) {
+   ;    Static DestroyPhysicalMonitor := GetModHandle("DestroyPhysicalMonitor", "Dxva2.dll")
+   ;    If (handle >= 0)
+   ;       DllCall(DestroyPhysicalMonitor, "Ptr", handle)
+   ; }
+   ;----------------------------------------------------------------------------
+   ; Return monitor work area coordinates that contains some window
+   ;----------------------------------------------------------------------------
+   Static getMonitorInfo(hWnd) {
+      hMonitor := this.MonitorNearWindow(hWnd)
+      Return this.mnInfoHash[hMonitor]
+   }
+
+   ;----------------------------------------------------------------------
+   ; Find a monitor ID to the 1/2/3/4 left/right/up/down from monitor holding current window
+   ;----------------------------------------------------------------------
+   Static AdjacentDirection(hWnd, Direction, wrap := 0) {
+      hMonitor := this.MonitorNearWindow(hWnd)
+
+      For hTgtMon, hValue in this.mnInfoHash {
+         If (hTgtMon != hMonitor) {
+            delta := this.monDelta(hMonitor, hTgtMon)
+            If (Abs(delta.X) > Abs(delta.Y))
+               val := (delta.X > 0) ? 1 : 2	; 1 = right, 2 = left
+            Else
+               val := (delta.Y > 0) ? 3 : 4   ; 3 = down (below), 4 = up (above)
+
+            If val = Direction {
+               ; debug("Match hMon=" hTgtMon ", hMonitor=" hMonitor ", val=" val)
+               Return hTgtMon
+            }
+         }
+      }
+      ; Handle wrap case (must be on same monitor), loop till we find any candidate
+      If (wrap) {
+         For hTgtMon, hValue in this.mnInfoHash {
+            If (hTgtMon != hMonitor) {
+               Return hTgtMon
+            }
+         }
+      }
+      Return 0
+   }
+   ;----------------------------------------------------------------------
+   ; Return the relative position of a window to active monitor
+   ; Called for each row in the switcher on populate
+   ;----------------------------------------------------------------------
+   Static MonitorDirection(hWnd) {
+
+      If ((hMonitor := this.MonitorNearWindow(hWnd)) = this.activeMonitor) {
+         Return 0
+      } Else {
+         delta := this.monDelta(hMonitor, this.activeMonitor)
+         ; Use either left/right or top/bottom, which is predominant
+         If (Abs(delta.X) > Abs(delta.Y))
+            ; right or left
+            Return (delta.X > 0) ? 1 : 2	; 1 = right, 2 = left
+         Else
+         ; below or above
+            Return (delta.Y > 0) ? 3 : 4   ; 3 = down (below), 4 = up (above)
+         Return 1
+      }
+   }
+   Static OnActiveMonitor(hWnd) => (this.MonitorNearWindow(hWnd) == this.activeMonitor)
+   ;----------------------------------------------------------------------
+   ; Move a window to and adjacent monitor
+   ; Can be bound to hotkey
+   ;----------------------------------------------------------------------
+   Static moveToAdjacentMonitor(hWnd, Direction, wrap := 0) {
+      hTgtMon := this.AdjacentDirection(hWnd, Direction, wrap)
+      If (hTgtMon) {
+         fromMon := this.MonitorNearWindow(hWnd)
+         ; mm(A_ThisFunc,A_LineNumber,"hMon=" hTgtMon ", fromMon=" fromMon)
+
+         this.WinMoveToMonitor(hWnd, fromMon, hTgtMon)
+
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Determine if the window is on a connected monitor
+   ; Only works with dxva monitors (non-laptop)
+   ; Returns non-zero if on a connected monitor
+   ;----------------------------------------------------------------------
+   Static IsWindowOnConnectedMonitor(ownerWin) {
+      hNearMonitor := this.MonitorNearWindow(ownerWin)
+      pmInfo := dxva2.getPhysMonitorsInfo(hNearMonitor)  ; 0,1,2...
+      debug(pmInfo.pHandle)
+      If (pmInfo.pHandle >= 0) {
+         InSource := dxva2.getMonitorInputSource(pmInfo.pHandle)
+         dxva2.DestroyPhysicalMonitors(pmInfo)
+
+         ; 0 for disconnected monitor, -1 for laptop
+         Return InSource
+      } Else {
+         Return 1 ; laptop or something
+      }
+   }
+
+   ;-------------------------------------------------------------------------------
+   ; Move a window to the current monitor if needed
+   ;-------------------------------------------------------------------------------
+   Static MoveWinToThisMonitor(ownerWin) {
+      hMonitor := this.MonitorNearWindow(ownerWin)
+      how := (hMonitor != this.activeMonitor)
+      If (how) {
+         ; Then move the window to this monitor
+         this.WinMoveToMonitor(ownerWin, hMonitor, this.activeMonitor)
+      }
+      Return how
+   }
+   ;----------------------------------------------------------------------
+   ; Return delta coordinates between to monitors
+   ; Raw pixels, independent of DPI
+   ;----------------------------------------------------------------------
+   Static monDelta(fromID, toID) {
+      delta       := Object()
+      delta.X        := this.mnInfoHash[fromID].mLeft - this.mnInfoHash[toID].mLeft
+      delta.Y        := this.mnInfoHash[fromID].mTop - this.mnInfoHash[toID].mTop
+      Return delta
+   }
+   /**
+    * Translate a normal position rectangle from one monitor to another
+    * Take into account DPI awareness of the window
+    * @param {Number} Handle to window of interest
+    * @param {Ptr rect} normPosition From (modified in place)
+    * @param {hMonitor} Handle to from Monitor
+    * @param {hMonitor} Handle to target Monitor
+    * @returns {Number} DPI Awareness
+   */
+  Static monTranslate(hWnd, wNorm, fromID, toID) {
+      ; TODO - Could account for border width as well
+
+      monFrom := this.mnInfoHash[fromID]
+      monTo   := this.mnInfoHash[toID]
+      ; non per monitor DPI awareness needs to be handled manually
+      awareness := GetWindowDPIAwareness(hWnd)
+      ; debug("DPI Awareness =" awareness " for " WinGetTitle(hWnd))
+      If (awareness < 2) {
+         wNorm.left   := Translate(wNorm.left,   monFrom.mLeft, monTo.mLeft, monTo.mRight, monFrom.DPI, monTo.DPI)
+         wNorm.right  := Translate(wNorm.right,  monFrom.mLeft, monTo.mLeft, monTo.mRight, monFrom.DPI, monTo.DPI)
+         wNorm.top    := Translate(wNorm.top,    monFrom.mtop,  monTo.mtop, monTo.mBottom, monFrom.DPI, monTo.DPI)
+         wNorm.bottom := Translate(wNorm.bottom, monFrom.mtop,  monTo.mtop, monTo.mBottom, monFrom.DPI, monTo.DPI)
+         constrainToMonitor(1)
+      } Else {
+         ; Per Monitor DPI Apps will handle translation themselces
+         wNorm.left   -= (monFrom.mLeft - monTo.mLeft)
+         wNorm.right  -= (monFrom.mLeft - monTo.mLeft)
+         wNorm.top    -= (monFrom.mTop - monTo.mTop)
+         wNorm.bottom -= (monFrom.mTop - monTo.mTop)
+         constrainToMonitor(monFrom.DPI/monTo.DPI)
+      }
+
+      Return awareness
+
+      ;----------------------------------------------------------------------
+      ; Normalize to 0 based dips then re-translate
+      ;----------------------------------------------------------------------
+      Translate(nPos, mfRef, mtRef, mtMax, fDPI, tDPI) {
+         return (nPos - mfRef)/fDPI * tDPI + mtRef
+      }
+      ;----------------------------------------------------------------------
+      ; Make sure the window is contained on the new monitor work area
+      ; If necessary, foreacst what the monitor will look like to DPI apps
+      ; since they resize themselves after the move
+      ;----------------------------------------------------------------------
+      constrainToMonitor(f:=1) {
+         ; Fit within screen size
+         If (wNorm.Width > monTo.width * f)
+            wNorm.Width := monTo.width * f
+         If (wNorm.Height > monTo.Height * f)
+            wNorm.Height := monTo.height * f
+         ; shift as needed to stay on screen
+         If (wNorm.Left < monTo.Left)
+            wNorm.shift((monTo.Left - wNorm.Left), 0)
+         If (wNorm.Top < monTo.Top)
+            wNorm.shift(0, (monTo.Top - wNorm.Top))
+         ; this is bit tricker since mon sides are not 0 based
+         mr := monTo.Left + monTo.Width * f
+         If (wNorm.right > mr)
+            wNorm.shift(-(wNorm.right - mr), 0)
+         mb := monTo.Top + monTo.Height * f
+         If (wNorm.bottom > mb)
+            wNorm.shift(0, -(wNorm.bottom - mb))
+      }
+   }
+   /*
+    * Constrain Notes:
+    * if width > work width then pull in right side to monitor width
+    * if height > work height then pull in bottom to monitor height
+    * if right > right border then shift left side, maintain width
+    * if bottom > bottom border then shift up, maintain height
+    */
+   /**
+    * Move a window to a different monitor without activating it after the move
+    * @param {number} hWnd - Handle to window
+    * @param {number} fromID - Handle to source monitor
+    * @param {number} toID - Handle to target monitor
+    * @returns Nothing
+    */
+   Static WinMoveToMonitor(hWnd, fromID, toID) {
+      Static defFlag                     := 0x0004 | 0x0010 | 0x0200 | 0x0400	; SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING
+      Static Moveflag                    := defFlag | 0x0001 | 0x0008	; SWP_NOSIZE | SWP_NOREDRAW
+      Static wpOG                        := stWINDOWPLACEMENT()
+      Static mnInfo                      := stMONITORINFOEX()
+
+      ; Adjust the normal position to the new monitor
+      GetWindowPlacement(hWnd, wpOG.Ptr)
+      this.monTranslate(hWnd, wpOG.rcNormalPosition, fromID, toID)
+
+      ; debug("After '" WinGetTitle(hWnd) "' " wpNorm.left ", flags=" hex(wpOG.flags) " " wpOG.ptMaxPosition.X " " wpOG.ptMaxPosition.Y)
+      tp := transparentWindow(hWnd)
+      Switch wpOG.showCmd {
+         ; Window is maximized, need to un-maximize first then restore
+         ; BUG - this works without extra step on windows 10 work computer but doesn't on Niwot win 11
+         Case SW_SHOWMAXIMIZED:
+            
+            GetMonitorInfo(toID, mnInfo)
+            ; debug("WinPos=" cWinRect.dump) 
+            if (osVersion() > 10) {
+               ; NOTE - Windows too, Chrome/Edge full screen youtube/videos after moving will restore to the original monitor
+               ; NOTE - On Win 11 have to first restore the window then re-maximize it
+               ; https://www.autohotkey.com/boards/viewtopic.php?f=76&t=109556
+               ; Start the move, disable animation and hide everything till done to prevent flashing
+               BO          := WinGetBorderOffset(hWnd)
+               ogStyle     := GetWindowLong(hWnd, GWL_STYLE)
+               twp         := GetWindowPlacementBuf(hWnd)
+               
+               twp.showCmd := SW_SHOWNOACTIVATE    ; force window to normal first so we can move it, minimized it won't move properly
+               twp.flags   |= WPF_RESTORETOMAXIMIZED ; when restored next time, be maximized
+               
+               ; Copy monitor work area to temp normal position
+               bx := SysGet(5)	; SM_CXBORDER = 5
+               by := SysGet(6)	; SM_CYBORDER = 6
+               ; Expand a little so the shadows/borders are accounted for (they disapear when maximized)
+               mnInfo.rcwork.CopyTo(twp.rcNormalPosition)
+               twp.rcNormalPosition.Top    -= (BO.T + by)
+               twp.rcNormalPosition.Left   -= (BO.L + bx)
+               twp.rcNormalPosition.Right  += (BO.R + bx)
+               twp.rcNormalPosition.Bottom += (BO.B + by)
+               ; Restore to normal on target window full size
+               SetWindowPlacement(hWnd, twp.Ptr)   
+
+               ; https://stackoverflow.com/questions/13431009/how-to-maximize-a-window-in-background
+               ; Step 2 - Force the window back to maximize but not bring it to the top
+               SetWindowLong(hWnd, GWL_STYLE, ogStyle) ; Trigger max size, SWP_FRAMECHANGED will make it happen
+            }
+            ; Resize to target monitor, Works fine on windows 10!
+            res := SetWindowPos(hWnd,
+               mnInfo.rcwork.left,
+               mnInfo.rcwork.top,
+               mnInfo.rcwork.width,
+               mnInfo.rcwork.height,
+               SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOZORDER) ; SWP_NOSIZE | SWP_ASYNCWINDOWPOS
+            if (res = 0)
+               Warning("SetWindowPos Fail for " WinGetTitle(hWnd))
+               ; RedrawWholeWindow(hWnd, RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN)
+
+            Default:
+               ; Drop through for any other case
+               ; Minimized or normal window, just set the new placement
+         }
+         SetWindowPlacement(hWnd, wpOG.Ptr)
+         tp := unset
+      ; If the wp.showCmd changes then the window state will change as well
+      Return hWnd
+   }
+
+   ;----------------------------------------------------------------------------
+   ; Return the min/max state of a window or MDI Client
+   ; Called on menu actions
+   ; 0x16000000  will be fill-screen for my apps
+   ; 0x160B0000  will be fill-screen for Chrome, not sure how to restore it properly?
+   ; TODO: Can all this be determined from Style and ExStyle
+   ;       GetWindowLong / Window Styles
+   ;       WS_EX_MDICHILD
+   ;       IsIconic() / IsZoomed()
+   ;----------------------------------------------------------------------------
+   Static getWinState(hWnd) {
+      ;state := WinGetMinMax(this.tskViewObj.getTLParent(hWnd)) ; -1 = minimized, 1 = maximized, 0 = normal
+      If (WinGetExStyle(hWnd) & WS_EX_MDICHILD) {
+         state := IsIconic(hWnd) ? this.WIN_MIN : IsZoomed(hWnd) ? this.WIN_MAX : this.WIN_NORMAL
+         ;debug("Child " WinGetClass(hWnd) " is state " state)
+      } Else {
+         state := WinGetMinMax(hWnd)	; -1 = minimized, 1 = maximized, 0 = normal
+         ; Expand to check for Chrome first
+         ; My FS is  0x1x000000 (no caption)
+         ; Chrome is 0x1x0B0000 (no caption)
+         ; With a caption it would be 0x1xVF0000
+         ; debug("WIN:" WinGetTitle(hWnd) ",state=" state ", Style=" hex(WinGetStyle(hWnd)))
+         If (state > this.WIN_MIN) {
+            ; My maximized will by 00
+            If (!(WinGetStyle(hWnd) & WS_OVERLAPPEDWINDOW)) {
+               state := this.WIN_FS
+               ; Chrome full screen will be 0B
+            } Else If ((WinGetStyle(hWnd) & WS_CAP) = 0) {
+               state := this.WIN_CFS
+            }
+         }
+      }
+      ;debug("Style for:" WinGetTitle(hWnd) "=" hex(WinGetStyle(hWnd)) ", state=" state)
+      Return state
+   }
+}
+
+;----------------------------------------------------------------------------
+; dxva2 Class
+;----------------------------------------------------------------------------
+Class dxva2 {
+   Static SetMonitorBrightness(pHandle, toSet) => DllCall("dxva2\SetMonitorBrightness", "Ptr", pHandle, "UInt", toSet)
+   Static DestroyPhysicalMonitor(pHandle) {
+      DllCall("dxva2\DestroyPhysicalMonitor", "Ptr", pHandle)
+   }
+   Static DestroyPhysicalMonitors(pmInfo) {
+      If (pmInfo.ptrBase AND pmInfo.Count) {
+         DllCall("dxva2\DestroyPhysicalMonitors", "Int", pmInfo.count, "Ptr", pmInfo.ptrBase)
+      }
+      pmInfo := unset
+   }
+   Static GetMonitorBrightness(pHandle, &minValue, &CurrentValue, &maxValue) =>
+      DllCall("dxva2\GetMonitorBrightness", "Ptr", pHandle, "UInt*", &minValue, "UInt*", &CurrentValue, "UInt*", &maxValue)
+   ;----------------------------------------------------------------------
+   ; Return true if the monitor supports brightness functions
+   ; NOTE - very slow due to full capabilities check
+   ;----------------------------------------------------------------------
+   Static hasBrightness(pHandle) {
+      Static MC_CAPS_BRIGHTNESS := 0x00000002
+      If (DllCall("dxva2\GetMonitorCapabilities", "ptr", pHandle, "uint*", &MonitorCapabilities := 0, "uint*", &SupportedColorTemperatures := 0)) {
+         Return MonitorCapabilities & MC_CAPS_BRIGHTNESS
+      } Else
+         Return 0
+   }
+   ;----------------------------------------------------------------------
+   ; Return a handle to a monitor from a window
+   ; NOTE - Must destroy the handle when done with it externally
+   ;----------------------------------------------------------------------
+   Static getPhysMonitorsInfo(hMon) {
+      Static GetNumberOfPhysicalMonitorsFromHMONITOR := GetModHandle("GetNumberOfPhysicalMonitorsFromHMONITOR", "Dxva2.dll")
+      Static GetPhysicalMonitorsFromHMONITOR         := GetModHandle("GetPhysicalMonitorsFromHMONITOR", "Dxva2.dll")
+
+      pmInfo := Object()
+      ;https://www.autohotkey.com/boards/viewtopic.php?f=83&t=103415
+      If (DllCall(GetNumberOfPhysicalMonitorsFromHMONITOR, "ptr", hMon, "uint*", &numPhyMon := 0, "Int")) {
+         ; Get Physical Monitor from handle
+         bufPhyMon := Buffer((A_PtrSize + 256) * numPhyMon, 0)
+         If (DllCall(GetPhysicalMonitorsFromHMONITOR, "Ptr", hMon, "uint", numPhyMon, "Ptr", bufPhyMon.Ptr, "Int")) {
+            ; Handles are 0 based ... 0,1,2,...
+            ; NOTE - Just getting the 1st physical monitor
+            pmInfo.pHandle := NumGet(bufPhyMon.Ptr, 0, "Ptr")
+            pmInfo.Name    := StrGet(bufPhyMon.Ptr + A_PtrSize, 200)
+            pmInfo.Count   := numPhyMon
+            pmInfo.ptrBase := bufPhyMon.Ptr
+            Return pmInfo
+         } Else {
+            logError("Failed to get GetPhysicalMonitorsFromHMONITOR")
+         }
+      } Else {
+         logError("Failed to get GetNumberOfPhysicalMonitorsFromHMONITOR")
+      }
+      pmInfo.pHandle := -1
+      pmInfo.Name    := "Error"
+      pmInfo.Count   := 0
+      pmInfo.ptrBase := 0
+      Return pmInfo
+   }
+   /**
+    * Return the brightness info on the monitor number selected
+    * NOTE - If monitor connected to a different input then GetMonitorBrightness will time out
+    * 
+    * @param handle monitor handle
+    * @returns object with monitor information
+    */
+   Static getDxvaBrightness(pHandle) {
+      i := result := minValue := currentValue := maxValue := 0
+      ; Sometimes it fails on first or second try, but succeds on repeat
+      While (result = 0 AND i++ < 10) {
+         result := dxva2.GetMonitorBrightness(pHandle, &minValue, &currentValue, &maxValue)
+         If (result != 1)
+            warning("GetMonitorBrightness Failed = " result " on count " i)
+         Sleep(50)
+      }
+      res := Object()
+      res.ok := result
+      res.Value := currentValue
+      res.Min := minValue
+      res.Max := maxValue
+      Return res
+   }
+   ;----------------------------------------------------------------------
+   ; Return the active input source if a dxva monitor
+   ; > 0 for valid DXVA monitor channel
+   ; = 0 for disconnected DXVA channel
+   ; = -1 for hardware error such as a laptop
+   ;----------------------------------------------------------------------
+   Static getMonitorInputSource(pHandle) {
+      Static ERROR_GEN_FAILURE := 0x1f
+      Static VCP_INPUT_SELECT := 0x60
+      ; 0xC0262582 was error on orka
+      If (res := DllCall("dxva2\GetVCPFeatureAndVCPFeatureReply"
+         , "Ptr", pHandle
+         , "char", VCP_INPUT_SELECT
+         , "Ptr", 0
+         , "Uint*", &currentValue := 0
+         , "Uint*", &maximumValue := 0)) {
+            Return currentValue
+      } Else {
+         ; debug("Error=" hex(A_LastError))
+         ; disconnected monitor OR laptop will fail, so look at the failure type
+         Switch A_LastError {
+            Case 0xC0262582, ERROR_GEN_FAILURE:
+               Return -1
+            Default:
+               Return 0
+         }
+         ; Return (A_LastError = ERROR_GEN_FAILURE) ? -1 : 0
+      }
+   }
+}
+GetMonitorInfo(toId, mnInfo) => DllCall("GetMonitorInfo", "ptr", toID, "ptr", mnInfo)
+
+dlog("Include File Loaded")

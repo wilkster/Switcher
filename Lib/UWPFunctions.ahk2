@@ -1,0 +1,276 @@
+#Include ..\common\dllFactory.ahk2
+#DllLoad "Propsys.dll"
+;----------------------------------------------------------------------
+; Best effort to return a process path for a child window
+; Check if it is a UWP app first
+; Would only be called if now prior icon file was available for a UWP app
+; TODO - Need to find a way to find the real process name for cloaked or minimized apps
+; - Trying to use the Package or Property System with no luck so far
+; - I CAN get the display name for either case, just not the process name
+;   process name is needed to find  the manifest file, if I could get the logo
+;   directly I don't need the process name
+;----------------------------------------------------------------------
+UWPPathName(hWnd, to := 1000) {
+   ; Static AFH := "ApplicationFrameHost.exe"
+   Static AFC := "ApplicationFrameHost.exe"
+   Static CGC1 := "Windows.UI.Core.CoreWindow1"  ; Single window UPW apps
+   Static CGC2 := "Windows.UI.Core.AppWindow1"   ; Multi-WIndow UWP Apps
+   Static CGCList := Array(CGC1, CGC2)
+   ; We know it won't show up if it is minimized or cloaked on a different desktop
+   ; debug("WinGetClass=" WinGetClass(hWnd))
+   If (WinGetMinMax(hWnd) >= 0 and NotCloaked(hWnd)) {
+      then := A_TickCount + to
+      While (A_TickCount < then) {
+         For CGC in CGCList {
+            ; If fails will trigger a failure if app is minimized or on different desktop
+            If (PPath := GetChild(CGC, hWnd))
+               Return PPath
+         }
+         Sleep(100)
+      }
+   } Else
+      debug("Skipping UWP window " hWnd " it appears to be minimized or cloaked")
+   Return ""
+
+   GetChild(CGC, hWnd) {
+      Try {
+         PPath := WinGetProcessPath(ControlGetHwnd(CGC, hWnd))
+      } Catch {
+         PPath := ""
+      }
+      Return PPath
+   }
+}
+
+;----------------------------------------------------------------------
+; Find the true process name of a UWP app if possible
+;----------------------------------------------------------------------
+
+; getUWPProcessName(hWnd) {
+;    childPID := parentPID := 0
+;    procPath := ""
+;    callback := CallbackCreate(enumChildCallback, "Fast")
+;    DllCall("GetWindowThreadProcessId", "Ptr", hWnd, "int*", &parentPID)
+;    If (parentPID) {
+;       childPID := parentPID
+;       DllCall("EnumChildWindows", "Int", hWnd, "ptr", callback, "int", parentPID)
+;       ; These only work on the corewindows which don't expose their handles directly
+;       If (procPath) {
+;          debug("   Done " childPID " vs " procPath)
+;          return procPath
+;       }
+;    }
+;    CallbackFree(callback)
+;    Return ""
+
+;    enumChildCallback(hwnd, parentPID) {
+;       childPID := 0
+;       DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "int*", &childPID)
+;       If (childPID != parentPID) {
+;          procPath := WinGetProcessPath(hwnd)
+;          Return 0
+;       }
+;       Return 1
+;    }
+; }
+
+;----------------------------------------------------------------------
+; Return the UWPWindowHandle if there is one vs the ApplicationFrameWindow handle
+; NOTE - Requires the UWP app to be active
+;----------------------------------------------------------------------
+; UWPWindowHandle(hWnd) { ; HWND = handle of a top-level window
+;    Static CGC1 := "Windows.UI.Core.CoreWindow1"  ; Single window UPW apps
+;    Static CGC2 := "Windows.UI.Core.AppWindow1"   ; Multi-WIndow UWP Apps
+
+;    If (WinGetMinMax(hWnd) >= 0 and NotCloaked(hWnd)) {
+;       ; Most are CoreWindow some are AppWindow
+;       If (getClassName(hWnd) == "ApplicationFrameWindow") {
+;          For CGC in [CGC1, CGC2] {
+;             ; If fails will trigger a failure if app is minimized or on different desktop
+;             Try Return ControlGetHwnd(CGC, hWnd)
+;          }
+;       }
+;    } Else {
+;       hWnd := 0
+;    }
+;    Return hWnd
+; }
+
+;----------------------------------------------------------------------
+; Return the Common Name for some app
+; NOTE - Can find the associated child app within an application frame hose
+; even if the child app is suspended or off desktop
+; Uses a cache of the app names, I store Icons by their app names
+; Default to window title if we can't get an app name
+;----------------------------------------------------------------------
+UWPAppName(hWnd) {
+   Static nameMap
+   ; https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-id
+   Static IID_PropertyKey := "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3} 5" ; AppID
+   ; one time cache
+   apps := 0
+   If (!IsSet(nameMap)) {
+      nameMap := Map()
+      ; https://learn.microsoft.com/en-us/windows/win32/shell/folderitem
+      For app in ComObject('Shell.Application').NameSpace('shell:AppsFolder').Items {
+         ; Look for UWP Store Apps only
+         If (app.Path ~= "!") {
+            ; Store the AppUserModelId by the application display (icon) name
+            nameMap[app.Path] := app.Name
+            apps++
+         }
+      }
+      dlog("cached " apps " UWP App Display/Icon Names and AUMIDs")
+   }
+   ; Get the AppID property directly, it is an ATOM so get the corresponding string
+
+   If (Prop := GetProp(hWnd, IID_PropertyKey)) {
+      ; BUG - Files app is returning a 0 for property
+      sz := VarSetStrCapacity(&strRes, 256)
+      rl := DllCall("GlobalGetAtomName", "Ptr", Prop, "Str", strRes, "Int", sz)
+      Return nameMap.Has(strRes) ? nameMap[strRes] : WinGetProcessName(hWnd)
+   } Else if (WinExist(hWnd)) {
+      warning("Failed to return property for '" WinGetProcessName(hWnd) "'")
+      Return WinGetProcessName(hWnd)
+   } else {
+      Return ""
+   }
+}
+;----------------------------------------------------------------------
+; Get the package name for a UWP app
+; NOTE - Only works for pid of the unhosted app, so not very helpful
+; Similar to the AppID but also includes version info embedded in the name
+; Can also use GetProcessPath for the same information
+;----------------------------------------------------------------------
+GetPackageFullName(ProcessId)    {
+   If (!(hProc := DllCall("Kernel32.dll\OpenProcess", "UInt", 0x0400, "Int", FALSE, "UInt", ProcessId, "Ptr"))) {
+      Return "OpenProcess ERROR"
+   }
+
+   GetCurrentPackageFullNameLength :=256  ; assume unicode
+   VarSetStrCapacity(&GetCurrentPackageFullName,GetCurrentPackageFullNameLength)
+   DllCall("GetPackageFullName", "Uint", hProc, "Wstr", GetCurrentPackageFullNameLength, "Str", GetCurrentPackageFullName)
+   DllCall("Kernel32.dll\CloseHandle", "Ptr", hProc)
+   Return GetCurrentPackageFullName
+}
+
+
+;----------------------------------------------------------------------
+; This is a kludgy way to copy over icons from the UWP folders
+; if we don't have them already
+;----------------------------------------------------------------------
+saveUWPLogo(dispName, exeTargetPath, logoTargetLoc) {
+
+   Try {
+      ; debug("Folder = " OutDir)
+      ; Read the manifest and look for logo file name
+      ; debug("  " A_LoopFilePath)
+      state := "FileWait"
+      exeFile := ""
+      sourceFileName := ""
+      SplitPath(exeTargetPath, &exeTarget, &dirname, &ext, &base)
+      sourceManifest := dirname "\" "AppxManifest.xml"
+      targetFileName := logoTargetLoc "\" dispName ".png"
+      ; skip if we alredy have a target file
+      If FileExist(targetFileName) {
+         Return targetFileName
+      }
+      ; Some apps have the manifest up one folder from exe
+      If !FileExist(sourceManifest) {
+         dirname := RegExReplace(dirname, "[^\\]+\\?$")
+         sourceManifest := dirname "\" "AppxManifest.xml"
+         If !FileExist(sourceManifest) {
+            warning("Cannot find manifest file " sourceManifest " for `n" exeTargetPath)
+            Return ""
+         }
+      }
+      ;----------------------------------------------------------------------
+      ; Loop over each row of the manifest file
+      ; Read the exe name then read the appropriate image name to build wildcard
+      ;----------------------------------------------------------------------
+      Loop Read sourceManifest {
+         ; debug(A_LoopReadLine)
+         ; <Logo>Assets\PackageLogo.png</Logo> also
+         ; <DisplayName>MyRadar Ad Free</DisplayName>
+         Switch state {
+            ;----------------------------------------------------------------------
+            ; First look for the executalbe name (some manifests have multiple apps)
+            ;----------------------------------------------------------------------
+            Case "FileWait":
+               If (RegExMatch(A_LoopReadLine, ' Executable="(.+?)"', &fname)) {
+                  SplitPath(fname[1], &exeFile, &dir, &ext, &base)
+                  If (exeFile = exeTarget) {
+                     ; debug("  Exe Found in Manifest:" fname[1] ", Manifest=" A_LoopFilePath)
+                     state := "LogoWait"
+                  }
+               }
+               ;----------------------------------------------------------------------
+               ; Then look for the largest logo file, loop through pattern to find it
+               ;----------------------------------------------------------------------
+            Case "LogoWait":
+               ; Square310x310Logo="
+               ; 310, 150, 71, 44, smaller logos have less white space around them
+               For num in [44, 71, 150, 310] {
+                  pos := RegExMatch(A_LoopReadLine, ' Square' num 'x' num 'Logo="(.+?)"', &fname)
+                  If pos
+                     Break
+               }
+               If (pos) {
+                  ; debug("  Logo Found in Manifest:" fname[1] ", Manifest=" A_LoopFilePath)
+                  SplitPath(fname[1], , &dir, &ext, &base)
+                  logoFileWC := dirname "\" dir "\" base ".scale-*." ext
+                  ; Get the largest file we can
+                  If (sourceFileName := getBiggestLogo(logoFileWC)) {
+                     ;----------------------------------------------------------------------
+                     ; If we have the right image file then copy the image over to a know location
+                     ; Later use imagemagick to convert to a ico file with multiple sizes
+                     ; Magick %%A -alpha set -trim -define icon:auto-resize="256,192,128,96,64,48,32,24,16" ICO\%%~nA.ico
+                     ;----------------------------------------------------------------------
+                     If (StrLen(exeFile) AND StrLen(sourceFileName)) {
+                        debug("  Found an exe Icon Pair:" exeFile ", " FileExist(sourceFileName) ", ->" sourceFileName)
+                        If (FileExist(sourceFileName)) {
+                           Try {
+                              debug("Copying " targetFileName "...")
+                              FileCopy(sourceFileName, targetFileName, true)
+                              Return targetFileName
+                           } Catch Error As e {
+                              logError("Error Copying Files " e.What " at line:" e.Line)
+                           }
+                        } Else {
+                           debug("Target State= " (!FileExist(targetFileName)) ", Source State=" FileExist(sourceFileName))
+                        }
+                        exeFile := sourceFileName := ""
+                     }
+                  } Else
+                     debug("Couldn't find icon for pattern=" logoFileWC)
+                  ; debug("200 exists " FileExist(dirName "\" dir "\" base ".scale-200." ext))
+                  state := "FileWait"
+               }
+            default:
+         }
+      }
+   } Catch As err {
+      warning(err.Message ", at " err.What " line " err.Line)
+   }
+   Return ""
+   ;----------------------------------------------------------------------
+   ; Find the largest image that fits the path, better for resizing
+   ; TODO : Should we target specific DPI versions?
+   ;----------------------------------------------------------------------
+   getBiggestLogo(patt) {
+      LogoName := ""
+      nfs := fs := 0
+      Loop Files patt {
+         nfs := FileGetSize(A_LoopFilePath)
+         ; debug("  Checking " A_LoopFilePath ", size=" nfs)
+         If nfs > fs {
+            LogoName := A_LoopFilePath
+            fs := nfs
+         }
+      }
+      ; debug(" Using " LogoName ", size=" fs)
+
+      Return LogoName
+   }
+}
+dlog("Include File Loaded")

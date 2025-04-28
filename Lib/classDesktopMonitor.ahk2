@@ -1,0 +1,96 @@
+;============================================================================ 
+; Desktop Monitor Class
+; When the desktop changes, update the tray icon for the current desktop
+; Requires prior call to RegisterShellHookWindow
+;============================================================================ 
+#Include ..\common\dllFactory.ahk2            ; Common files, mostly dllcall window related
+#Include ..\common\WindowFunctions.ahk2            ; Common files, mostly dllcall window related
+#Include vda.ahk2                   ; virtual desktop accessor wrapper
+
+class clsDesktopMonitor {
+   iconCache := Map()
+   lastDesktop := -1
+
+   __new() {
+      this.lastDesktop := this.changeDesktopIcon()
+      ; tray icon mouse movement or click
+      OnMessage(0x404, this.TrayMessage.Bind(this))
+      ; desktop watcher callback, changes icon to match desktop
+      vda.registerDTMonitor(this.dtChangedcb.Bind(this))
+   }
+   __delete() {
+      ; CallBackFree(this.CWCB)
+      dlog("clsDesktopMonitor Destroyed")
+      vda.UnregisterDTMonitor(this.dtChangedcb.Bind(this))
+   }
+   ;---------------------------------------------------------------------------- 
+   ; Callback for when a desktop changes, change the icon accordingly
+   ;---------------------------------------------------------------------------- 
+   dtChangedcb(wParam, lParam, msg, hwnd) {
+      ; lParam+1 contains the new desktop, however we don't need it
+      ; debug("Desktop change detected")
+      this.changeDesktopIcon(0)
+   }
+
+   ;---------------------------------------------------------------------------- 
+   ; If the desktop changed since last time, set the tray icon
+   ;---------------------------------------------------------------------------- 
+   changeDesktopIcon(setActive:=0) {
+      static iconPath := A_ScriptDir . "\Icons" 
+      dt := vda.DtCurrent
+      if (dt != this.lastDesktop) {
+         if (setActive) {
+            ; Find the top valid window in the Z-Order on the new desktop and activate it
+            wid_List := WinGetList(,,"Program Manager") ; All active Windows on this virtual desktop
+            for hWnd in wid_List {
+               if (isValidShellHookCandidate(hWnd)) {
+                  WinActivate(hWnd)
+                  break
+               }
+            }
+         }
+         icn := iconPath . "\Move to Desktop " . dt+1 . ".ico"
+         A_IconTip := "On " vda.DtName[dt] . "`nClick for next desktop"
+         try {
+            TraySetIcon(this.getIcon(icn))
+         } catch as err {
+            elog(err)
+         }
+         this.lastDesktop := dt
+      }
+      return dt
+   }
+   ;----------------------------------------------------------------------------
+   ; Return an icon handle for the IL_ADD command
+   ; Cache it so we can just reuse the bitmaps vs reading the file each time
+   ; This appears to handle scaling automatically
+   ;----------------------------------------------------------------------------
+   getIcon(pid_path) {
+      static defIcon := A_ScriptDir . "\Icons\Win" OsVersion() ".png"
+      if (!this.iconCache.Has(pid_path)) {
+         ;1-10 ms to read from file (assuming recently accessed)
+         try {
+            this.iconCache[pid_path] := LoadPicture(pid_path,"Icon1", &iType)
+         } catch {
+            this.iconCache[pid_path] := LoadPicture(defIcon,"Icon1", &iType)
+         }
+      }
+      ; returns a copy (since it is destroyed automatically)
+      return "HICON:*" this.iconCache[pid_path]
+   }
+   ;---------------------------------------------------------------------------- 
+   ; Handle left button clicks on the tray icon
+   ;---------------------------------------------------------------------------- 
+   TrayMessage(wParam, lParam, uMsg, hWnd) {
+      Switch lParam {
+         Case 0x202:   ; user left-clicked tray icon
+            nxt := GetKeyState("Ctrl") ? -1 : 1
+            vda.DtGoTo(mod((vda.DtCurrent+nxt), vda.DtCount))
+            this.changeDesktopIcon(1)
+         Case 0x203:   ; user double left-clicked tray icon
+         Case 0x204:   ; user right-clicked tray icon
+         Case 0x208:   ; user middle-clicked tray icon
+         Default:
+      }
+   }
+}

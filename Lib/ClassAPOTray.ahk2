@@ -1,0 +1,77 @@
+#Requires AutoHotkey >= v2.1-alpha.4
+#Include ..\common\dllFactory.ahk2            ; Common files, mostly dllcall window related
+
+;----------------------------------------------------------------------
+; Class to add and handle APO Menu Entries to thr Tray Icon
+;----------------------------------------------------------------------
+Class APOTrayMenu {
+   Static Location := "C:\Program Files\EqualizerAPO\config\"
+   ; config.txt is the hardcoded config file that will include other files
+   Static ConfigFile := APOTrayMenu.Location "config.txt"
+   Static icon := A_ScriptDir . "\Icons\APO.Png"
+   Static MenuMap := Map()
+   ;----------------------------------------------------------------------
+   ; Build the menu based on the *.Inc file names
+   ;----------------------------------------------------------------------
+   Static __New() {
+      Loop Files APOTrayMenu.Location "*.Inc" {
+         If A_Index = 1
+            A_TrayMenu.Add()  ; Creates a separator line.
+         SplitPath(A_LoopFileFullPath, , , , &baseName)
+         A_TrayMenu.Add(baseName, APOTrayMenu.MenuHandler.Bind(this))  ; Creates a new menu item.
+         A_TrayMenu.SetIcon(baseName, APOTrayMenu.icon)
+         APOTrayMenu.MenuMap[baseName] := A_LoopFileName
+      }
+      APOTrayMenu.CheckActive()
+   }
+   ;----------------------------------------------------------------------
+   ; Check which one is active
+   ;----------------------------------------------------------------------
+   Static CheckActive() {
+      If (Active := APOTrayMenu.getConfigFile()) {
+         For key, value in APOTrayMenu.MenuMap {
+            If InStr(Active, key)
+               A_TrayMenu.Check(key)
+            Else
+               A_TrayMenu.Uncheck(key)
+         }
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Callback on menu selection
+   ;----------------------------------------------------------------------
+   Static MenuHandler(ItemName, ItemPos, MyMenu) {
+      APOTrayMenu.SetConfigFile("Include: " APOTrayMenu.MenuMap[ItemName])
+      APOTrayMenu.CheckActive()
+   }
+   ;----------------------------------------------------------------------
+   ; Set the current config
+   ; Note ReadLine and WriteLine can be used, but will get an extra CRLF in file
+   ;----------------------------------------------------------------------
+   Static SetConfigFile(What) {
+      If (FileExist(APOTrayMenu.ConfigFile)) {
+         TrayTip(What, "APO Config Changed", 1)
+         fObject := FileOpen(APOTrayMenu.ConfigFile, "w")
+         fObject.Write(What)
+         fObject.Close()
+         SetTimer(TrayTip, 1000)
+      } Else {
+         MsgBox("No pre-existing APO Config File!")
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Read the first line from the config file
+   ;----------------------------------------------------------------------
+   Static getConfigFile() {
+      If (FileExist(APOTrayMenu.ConfigFile)) {
+         fObject := FileOpen(APOTrayMenu.ConfigFile, "r")
+         contents := Trim(fObject.Read())
+         fObject.Close()
+         Return contents
+      } Else {
+         Return ""
+      }
+   }
+
+}
+dlog("Include File Loaded")

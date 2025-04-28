@@ -1,0 +1,183 @@
+/*
+ Allow binding num keypads to a particular window via ctrl-<n>
+ Then hidding <n> key later will bring that window to the top
+ If window no longer exists the entry wll be cleared out.
+
+ Problem is going to be remembering the keys (in my head)
+ Maybe snapshot the top 10 windows in z-order and assign them at once?
+ We could lose the number index but have to strip off the modifer key ^
+ when saving the hash entry
+
+*/
+#Include ..\common\dllFactory.ahk2            ; Common files, mostly dllcall window related
+#Include ..\common\WindowFunctions.ahk2     ; Window Related Functions
+#Include classTaskViewSH.ahk2       ; Class for tracking and providing list of active windows
+
+class windowToKey {
+   __new(tvObj) {
+      ; "NumpadIns"
+      static keyArray := ["NumpadEnd","NumpadDown","NumpadPgDn","NumpadLeft","NumpadClear","NumpadRight","NumpadHome","NumpadUp","NumpadPgUp"]
+      static keyNames := ["𝟭","𝟮","𝟯","𝟰","𝟱","𝟲","𝟳","𝟴","𝟵"] ; 𝟬 𝟭 𝟮 𝟯 𝟰 𝟱 𝟲 𝟳 𝟴 𝟵 http://xahlee.info/comp/unicode_math_font.html
+      this.keyNameMap   := Map()
+      this.keyMap       := Map()
+      this.keyMapParent := Map()
+      this.handleToKey  := Map()
+      this.myTV := tvObj ; clsTaskView()
+      ; Can loop this over keys of interest
+      ; Note requires numlock to be off
+      SetNumLockState(0)
+      ; HACK - Fix this if we can detect a real numeric keypad
+      ; Orkas keyboard is kinda broken
+      if (A_ComputerName != "Orka") {
+         for kp in keyArray {
+            ; keypad to jump to
+            HotKey(kp, this.popKey.Bind(this,kp))
+            ; Ctrl num pad to add
+            HotKey("^" . kp, this.pushKey.Bind(this,kp))
+            ; Ctrl-Alt to remove
+            HotKey("^!" . kp, this.removeKey.Bind(this,kp))
+            this.keyNameMap[kp] := keyNames[A_Index]
+            ; IDEA - Do we want ability to clear the key?
+         }                 
+      } Else {
+         debug("Skipping NumPad hotkeys on " A_ComputerName)
+      }
+   }
+   __delete() {
+      this.myTV := ""
+      this.keyNameMap := ""
+      this.keyMap := ""
+      this.keyMapParent := ""
+      this.handleToKey := ""
+      dlog("windowToKey Destroyed")
+   }
+   Item(hwnd) => this.handleToKey.Get(hwnd,"")
+
+   Exists(hwnd) => this.handleToKey.Has(hwnd)
+
+   ;---------------------------------------------------------------------------- 
+   ; Save the window for this key
+   ;---------------------------------------------------------------------------- 
+   pushKey(num, hkey) {
+      ; Remove any prior assignments for this key
+      if (this.keyMap.has(num) or this.keyMapParent.has(num)) {
+         debug("Removing prior assignment for:" num)
+         onTop       := this.keyMap.Get(num,0)
+         onTopParent := this.keyMapParent.Get(num,0)
+         if (onTop > 0) 
+            this.removeH2K(onTop) 
+         if (onTopParent > 0) 
+            this.removeH2K(onTopParent)
+         this.keyMap.Delete(num)
+         this.keyMapParent.Delete(num)
+      }
+      ; Grab active window, may be a mdi client
+      onTop := this.myTV.winOnTop()
+      ; Parent will be the same for top level windows
+      ;onTopParent := GetParent(onTop)
+      ; Get window root owner as default (not just root)
+      onTopParent := GetRootOwner(onTop)
+      ; Key => Handle
+      this.keyMap[num]       := onTop
+      this.keyMapParent[num] := onTopParent
+      ; handle => Key
+      this.handleToKey[onTop]       := this.keyNameMap[num]
+      this.handleToKey[onTopParent] := this.keyNameMap[num]
+      dlog("Push Key=:'" num ", window=" hx(onTop))
+      SoundBeep(600,80)
+      SoundBeep(900,80)
+   }
+   ;---------------------------------------------------------------------------- 
+   ; Remove any keys assigned
+   ;---------------------------------------------------------------------------- 
+   removeKey(num, hkey) {
+      if (this.keyMap.has(num)) {
+         ; Grab active window, may be a mdi client
+         onTop := this.myTV.winOnTop()
+         ; Get window root owner as default (not just root)
+         onTopParent := GetRootOwner(onTop)
+         ; Key => Handle
+         try {
+            Debug("Remove Key=:'" num ", window=" hx(this.keyMap[num]))
+            this.keyMap.Delete(num)
+            this.keyMapParent.Delete(num)
+            ; handle => Key
+            this.removeH2K(onTop)
+            this.removeH2K(onTopParent)
+            SoundBeep(900,80)
+            SoundBeep(600,80)
+         } catch as err {
+            elog(err)
+         }
+      } else {
+         SoundBeep(600)
+         debug("removeKey: No Window Assigned to " num)
+      }
+   }
+   ;---------------------------------------------------------------------------- 
+   ; Restore the window to top for this key
+   ; If child was assigned, then use the parent if child was closed
+   ;---------------------------------------------------------------------------- 
+   popKey(num, hkey) {
+      if (this.keyMap.has(num)) {
+         if (WinExist(this.keyMap[num])) {
+            hWnd :=  this.keyMap[num]
+            Debug("Activating key '" num "' for window " hx(hWnd))
+            this.showIfHidden(hWnd)
+            this.myTV.myWinActivate(hWnd)
+         } else if (WinExist(this.keyMapParent[num])) {
+            hWnd :=  this.keyMapParent[num]
+            ; Child has been closed, but parent/owner still exists. Use that instead
+            Debug("Activating key '" num "' for parent window " hx(hWnd))
+            this.showIfHidden(hWnd)
+            this.myTV.myWinActivate(hWnd)
+            ; remove the child, parent will remain
+            this.removeH2K(this.keyMap[num])
+            ; Assign parent to the key going forward
+            this.keyMap[num] := hWnd
+            SoundBeep(800,100)
+            Sleep(100)
+            SoundBeep(800,100)
+            ; Save new winOnTop here?
+         } else {
+            Debug("Window " hx(this.keyMap[num]) " for " num " no longer exists")
+            ; neither exists, remove both of them
+            this.removeH2K(this.keyMap[num])   
+            this.removeH2K(this.keyMapParent[num])   
+            this.keyMap.Delete(num)
+            this.keyMapParent.Delete(num)
+            SoundBeep(500,100)
+            Sleep(100)
+            SoundBeep(500,100)
+         }
+      } else {
+         SoundBeep(400)
+         debug("popKey: No Window Assigned to " num)
+      }
+   }
+   ;---------------------------------------------------------------------------- 
+   ; Remove a handle assignment for some key (handle)
+   ;---------------------------------------------------------------------------- 
+   removeH2K(hWnd) {
+      if (this.handleToKey.Has(hWnd)) {
+         this.handleToKey.Delete(hWnd)   
+      } else {
+         warning("Did not find hWnd " hx(hWnd) " in handleToKey")
+      }
+   }
+   ;---------------------------------------------------------------------------- 
+   ; Some windows are hidden when closed rather than destroyed
+   ;---------------------------------------------------------------------------- 
+   showIfHidden(id) {
+      static WS_VISIBLE := 0x10000000
+      style := WinGetStyle(id)
+      if (!(style & WS_VISIBLE)) {
+         debug("Restoring hidden window " hx(id) " style =" hx(style))
+         WinShow(id)
+         return 1
+      } else {
+         return 0
+      }
+   }
+}
+dlog("Include File Loaded")

@@ -1,0 +1,1610 @@
+﻿/*
+* you must save this script as UTF-8-BOM to make it work (unicode embedded).
+*
+* Functions to handle task switching and task lists
+* Typically bound to mouse buttons
+* Ptr := (A_PtrSize == 8) ? "UPtr" : "UInt"
+*
+* guiObject -> global variable initialized in autoexec portion of script
+*/
+#include ..\common\Structures.ahk2            ; Common structures used in 2.1 Alpha
+#Include ..\common\dllFactory.ahk2            ; Common files, mostly dllcall window related
+#Include ..\common\WindowFunctions.ahk2            ; Common files, mostly dllcall window related
+#Include classTaskViewSH.ahk2       ; Class for tracking and providing list of active windows
+#Include ..\common\monitors.ahk2              ; Class for handling multiple monitors
+#Include ..\common\MoverResizer.ahk2          ; Class for tracking and providing list of active windows
+#Include Class_LV_Colors.ahk2       ; CLV
+DetectHiddenWindows(0)
+Global guiObject := ""
+; Candidates to split the title if it needs to be shortened
+; GroupAdd("TitleSplit", "ahk_exe chrome.exe")
+; GroupAdd("TitleSplit", "ahk_exe msedge.exe")
+; GroupAdd("TitleSplit", "ahk_exe vs.exe")
+; GroupAdd("TitleSplit", "ahk_exe code.exe")
+
+;----------------------------------------------------------------------------
+; Wrapper for the task GUI specific for Alt-Tabbing
+; Called from Alt-Tab
+;----------------------------------------------------------------------------
+processAltTab() {
+   If (IsObject(guiObject)) {
+      If (guiObject.Active = 1) {
+         guiObject.processAltTab()
+         ;mm(A_ThisFunc,A_LineNumber,"Repeat")
+      } Else {
+         If (guiObject.Populate(0, 0) > 0) {
+            ;mm(A_ThisFunc,A_LineNumber,"New")
+            ; There were some tasks returned (i.e. GUI is up), then look for Alt key
+            guiObject.setAltTimer()
+         }
+      }
+   } Else {
+      warning("GUI class Isn't initialized yet")
+   }
+}
+;----------------------------------------------------------------------------
+; Bound to keys, build the gui with parameters
+; GUI handles all its own functions
+;----------------------------------------------------------------------------
+buildTaskGUI(inTask := 0, usingMouse := 1) {
+   ;mm(A_ThisFunc,A_LineNumber, "Gui Is Active=" guiObject.Active)
+   If (IsObject(guiObject)) {
+      If (guiObject.Active) {
+         guiObject.closeGUI()
+      } Else {
+         guiObject.Populate(inTask, usingMouse)
+      }
+   } Else {
+      warning("GUI class Isn't initialized yet")
+   }
+}
+
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+; Public Functions from Hotkeys Below
+;++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+;----------------------------------------------------------------------------
+; OS dependent task view
+;----------------------------------------------------------------------------
+taskView() {
+   If (A_OSVersion ~= "10.+") {
+      ; Windows 10 version is pretty good
+      SendInput("{LWin down}{Tab}{LWin up}")
+   } Else {
+      ;SendInput {Alt down}{Ctrl down}{Tab}{Alt up}{Ctrl up}
+      ;SendInput {LWin down}{Ctrl down}{Tab}{LWin up}{Ctrl up}
+      ; Temp for Work windows 7 until I get a better mouse.
+      buildTaskGUI(0, 1)
+   }
+}
+;----------------------------------------------------------------------------
+; Class to build and manipulate a GUI of tasks/windows
+;----------------------------------------------------------------------------
+Class clsTaskGUI {
+
+   osVer      := osVersion() ;10 or 11
+   guiMargin  := 18	;1 pixel outer border + this margin on all for inner sides
+   ;scale     := A_ScreenDPI / 96
+   inTask     := 0
+   usingMouse := 1
+   lvObj      := 0
+   ; Cols for list viw
+   indexTitle       := 1
+   indexState       := 2
+   indexPin         := 3
+   indexMon         := 4
+   indexDT          := 5
+   indexAssKey      := 6
+   indexClose       := 7
+   indexKey         := 8
+   
+   guiObj           := 0
+   parentObj        := 0
+   maxTitLen        := 95
+   minTitLenPattern := "{:-70}"
+   lastLVIndex      := 0
+   guiTransparency  := 250
+   showDef          := 0   ; set to 1 to show icons for current desktop/monitor
+   Gui              := 0
+   ; Icons are for the RMB menu
+   ImageListID := 0
+   explorerPathCache := Map()
+   wtkObj := 0
+   ; Border width both sides
+   bw := SysGet(5)	; SM_CXBORDER
+   defFontSize := 16
+   fontSize := -1
+   ; .scale will be the same as the windows scale setting, e.g. 1.75 for 175%
+   ; DPI is fixed at AHK launch, !only for main monitor
+   scale := A_ScreenDPI / 96.0
+   menuIcons := Map()
+   ; Colors
+   Static bgColor := "c191919"
+   ; Static bgColor := "c0C1115"
+   Static fgColor := "cE1E1D2"
+   Static hlColor := lumRGB(clsTaskGUI.bgColor, 35)   ; use background a little lighter
+   Static bdColor := lumRGB(clsTaskGUI.bgColor, 60)   ; use background a little lighter
+
+   ; Unicode characters
+   Static aWinChild := " ▣ " ; 🧒
+   Static aWinHung := " ⏳ "
+   Static aWinPin := "📌"
+
+   ; Unicode icons for various window states
+   Static aWinState := Array(" 🗕 ", " 🗗 ", " 🗖 ", "🗔", "📺") ; ‗ 🗕🗙═―
+
+
+   custColSel_ResMax := -1
+
+   __new(tvObj, _wtkObj := 0) {
+      Static iconPath := A_ScriptDir . "\Icons\"
+      this.wtkObj := _wtkObj
+      monInfo.activeMonDetails(0)
+
+      this.tskViewObj := tvObj	; clsTaskView()
+      this.buildGui()
+
+      ; Callbacks
+      this.timerFocus := this.CheckGuiFocusTimer.Bind(this)
+      this.timerAlt := this.CheckAltTimer.Bind(this)
+
+      ; initial cache
+      this.tskViewObj.Populate(0)
+      this.lvPopulate()
+      this.lvObj.Delete()
+      dlog("GUI Constructor Complete")
+
+      ; cache all of the menu icon images
+      Loop Files iconPath . "\*.ico" {
+         SplitPath(A_LoopFileFullPath, , , , &baseName)
+         this.menuIcons[StrLower(baseName)] := "HICON:*" LoadPicture(A_LoopFileFullPath, "Icon1", &iType)
+      }
+
+   }
+   __delete() {
+      this.tskViewObj := ""
+      this.wtkObj := ""
+      explorerPathCache := ""
+      dlog("clsTaskGUI Destroyed")
+   }
+   ; main gui normally hidden at this point
+   Active => WinExist("ahk_id" . this.guiObj.hWnd) = 0 ? 0 : 1
+   ;----------------------------------------------------------------------------
+   ; termine if the Gui object is valid
+   ;----------------------------------------------------------------------------
+   hasGUI => IsObject(this.guiObj)
+
+   ; hasGUI() {
+   ;    ;debug("Gui is " Type(this.guiObj))
+   ;    ; default will be Integer, once created will be Gui
+   ;    return Type(this.guiObj) = "Gui" ? 1 : 0
+   ; }
+
+
+   ;----------------------------------------------------------------------------
+   ; Length of entries in task view
+   ;----------------------------------------------------------------------------
+   taskLength => this.tskViewObj.Entries
+   ;----------------------------------------------------------------------------
+   ; Called externally, bound tl Alt Tab keys. Move within the task list up/down
+   ;----------------------------------------------------------------------------
+   processAltTab() {
+      vIndex := this.clvObj.LasSelRow + (InStr(A_ThisHotkey, "+") ? -1 : 1)
+      vCount := this.lvObj.GetCount()
+      ; debug("vIndex=" vIndex)
+      ; Wrap if needed
+      If (vIndex < 1)
+         vIndex := vCount
+      Else If (vIndex > vCount)
+         vIndex := 1
+
+      ; Change selection
+      this.lvObj.Modify(vIndex, "Select Focus")
+   }
+
+   ;----------------------------------------------------------------------------
+   ; Private methods below
+   ; Create the GUI that handles the mouse or keyboard
+   ; The GUI is persistent (build one time at loading)
+   ; Used for processAltTab or direct mouse binding
+   ;----------------------------------------------------------------------------
+   buildGui() {
+
+      If (this.hasGUI) {
+         this.Gui.Destroy()
+         warning("Rebuilding GUI, did not expect to do this")
+      }
+      ; adding 'this' as last parameter makes onevent call a method vs global function
+      ; 4/8/2023 disabled DPI and computing everything here in raw pixels as neeed, DPI is based on the A_ScreenDPI
+      ; WS_EX_LAYERED := "+E0x80000" -> Layered window can be used if needed
+      ; WS_EX_COMPOSITED makes it flicker
+      this.guiObj := Gui("-Caption " (this.osVer > 10 ? "+" : "-") "Border +ToolWindow -DPIScale", "Switcher", this)
+      ; 2025-04-07 - I will continue to handle DPI scaling internally
+      If (VerCompare(A_AhkVersion, "2.1-alpha.16") >= 0) 
+         this.guiObj.Opt("-DPIResize")
+      ; static WS_CLIPSIBLINGS := 0x4000000
+      ; this.guiObj.AddPic(WS_CLIPSIBLINGS ' h-1 w200', "bg.png")
+      this.guiObj.BackColor := clsTaskGUI.bgColor
+      ; this.guiObj.BackColor := 0x808080
+
+      ; Margins flowed down to listview
+      this.guiObj.MarginX := this.guiObj.MarginY := this.guiMargin
+      this.guiObj.OnEvent("Escape", this.closeGUI.Bind(this))	;103 new call
+      ; Listview Parameters
+      ; Report                        -> report view (default)
+      ; Count x                       -> Initial allocate x slots
+      ; NoSort                        -> Disallow sorting by clicking the header
+      ; +ReadOnly                     -> No Edits allowed
+      ; -Multi                        -> Only select one row at a time
+      ; -Want F2                      -> Prevent F2 from editing (can also specify ReadOnly)
+      ; -Sort                         -> No Sorting initially
+      ; -Hdr                          -> No header
+      ; -E0x200                       -> WS_EX_CLIENTEDGE No Border, disable extended styles
+      ; +AltSubmit                    -> Stores index values vs text in listbox array, no impact here 2024-01-11 Removed option
+      ; LV0x20                        -> LVS_EX_FULLROWSELECT Select entire row, not just the text
+      ; LV0x8                         -> LVS_EX_TRACKSELECT Enable Hot Tracking (dynamically set)
+      ; LV0x400000                    -> Transparent Background (not used now)
+      ; LV0x10000                     -> Double Buffering (supposed to be faster)
+      ; NOTIFY +0x0100
+      ; TODO - How do I add an extended class listview
+      this.lvObj := this.guiObj.AddListView(
+         "Report Count 10 -Multi -WantF2 -E0x200 +LV0x20 LV0x400000 -Sort -Hdr NoSort -Grid LV0x10000 +ReadOnly",
+         ["Task", "State", "Pinned", "Mon", "Desktop", "assKey", "Close", "Key"]
+      )
+      ; not used - sets the theme of the listview to explorer, however has vertical grid lines
+      this.lvObj.Opt("Background" clsTaskGUI.bgColor " C" clsTaskGUI.fgColor)
+
+      ; this.lvObj.Opt("C" fgColor)   ; Using transparent background, let GUI color flow thru, text color has to be in Hex or name
+      this.lvObj.OnEvent("Click", this.cbLbSelect.Bind(this))
+      ;this.lvObj.OnEvent("ItemSelect", this.lbHighlight.Bind(this))
+      this.lvObj.OnEvent("ContextMenu", this.GuiContextMenu.Bind(this))
+      ; growth, will need to call this for initial selection however
+      ; want hidden button to handle keyboard enter for manual selection
+      this.guiObj.AddButton("w0 h0 x0 y0 Hidden Default", "OK").OnEvent("Click", this.ButtonOK.Bind(this))
+      ; Can change the look and feel of the listbox theme
+      ; SetExplorerTheme(this.lvObj.hWnd)
+      ; Hotkeys for keyboard handling while GUI is up
+      HotIfWinactive("ahk_id " this.guiObj.hWnd)
+      Hotkey(" ", this.lbSelectWrapper.Bind(this, this.indexTitle))
+      Hotkey("x", this.lbSelectWrapper.Bind(this, this.indexClose))
+      Hotkey("w", this.lbSelectWrapper.Bind(this, this.indexState))
+      Hotkey("p", this.lbSelectWrapper.Bind(this, this.indexPin))
+      Hotkey("d", this.lbSelectWrapper.Bind(this, this.indexDT))
+      Hotkey("m", this.lbSelectWrapper.Bind(this, this.indexMon))
+      ; Add ons
+      Hotkey("r", this.lbSelectWrapper.Bind(this, this.custColSel_ResMax))
+      HotIfWinactive
+      ; Left -> Move to monitor on the left (wrap)
+      ; Right -> Move to monitor on the right (wrap)
+      ; Ctrl Left -> Move to desktop on the left (wrap)
+      ; Ctrl Right -> Move to desktop on the right (wrap)
+
+      ; Listbox will be resized each time we have rows to populate it
+
+
+      this.lvObj.move(, , 0, 0)
+      this.guiObj.Opt("+AlwaysOnTop")	;keeps it over other on top if set here and not at creation
+      this.guiObj.move(0, 0, 0, 0)	; prevent initial flash/draw
+      ; SetAcrylicGlassEffect(3, 0x0000FF, this.guiTransparency, this.guiObj.hWnd)
+      WinSetTransparent(0, this.guiObj.hWnd) ; Initially invisible
+      ; Since this is a caption-less window, need to give some hits to Windows
+      ; Shadow border, possibly no impact on windows 11 as there is a faded shadow there already
+      ; round corners and drop shawdows on windows 11, ignored by windows 10
+      If (this.osVer > 10) {
+         Dark11Mode(this.guiObj.hWnd)
+         Round11Corners(this.guiObj.hWnd)
+         Draw11Border(this.guiObj.hWnd, clsTaskGUI.bdColor)
+         ; Mica11Backdrop(this.guiObj.hWnd) ; Not sure this does anything
+      } Else {
+         DropShadow(this.guiObj.hWnd)
+      }
+      ; TODO - there are cases where losing focus we may not want to close the GUI
+      ; OnMessage(0x6, this.WM_ACTIVATE.Bind(this))
+
+      ; TODO - maybe assume we want manual selection colors and pass them in here
+      this.clvObj := LV_Colors(this.lvObj) ; CLV
+      ; Override the selection highlight with different color and faster tracking to mouse
+      this.ClvControls()  ; CLV
+
+      dlog("Main Gui Built")
+      Return true
+   }
+   ;----------------------------------------------------------------------
+   ; CLV Color the listview cells where desired
+   ; Only called once
+   ; Enables hot tracking colors on a cell by cell basis
+   ;----------------------------------------------------------------------
+   ClvControls() {
+      ; this.clvObj.UpdateProps()
+      ; Set colors for each column, inlcuding hot track colors
+      ; NOTE - If we specify a hot track background, by default non-highlight background will be used as cursor moves off item
+
+      ; NOTE - listview hot tracking not working if this isn't called and ClvControls is called
+      this.clvObj.SelectionColors(clsTaskGUI.hlColor, "") ; CLV
+      htBG := lumRGB(clsTaskGUI.bgColor, 20)   ; use background a little lighter
+
+      ; selBG := this.clvObj.BkClr  ; Selection of row won't color icons doing this since we are forcing default background
+      ; "cE1E1D2"
+      this.clvObj.ColColor(this.indexTitle, , "ce8e8da", "cffffff")
+      ; this.clvObj.ColColor(this.indexState, , lumRGB(clsTaskGUI.fgColor, -110), clsTaskGUI.fgColor, htBG)
+      this.clvObj.ColColor(this.indexState, , lumRGB("cffffff", -110), clsTaskGUI.fgColor, htBG)
+      this.clvObj.ColColor(this.indexPin, , "c2e74aa", "c64d3ff", htBG)
+      this.clvObj.ColColor(this.indexMon, , "ccb8353", "cffa264", htBG)
+      this.clvObj.ColColor(this.indexDT, , "c57aea8", "c97fffc", htBG)
+      this.clvObj.ColColor(this.indexAssKey, , "c48c2d4", "c1dddfb", htBG)
+      ; this.clvObj.ColColor(this.indexClose, , "cc54d49", "cffffff", "cDC352E") ; could be white with red back ground
+      this.clvObj.ColColor(this.indexClose, , "c9e3e3b", "cffffff", "cC4314B") ; "cDC352E" could be white with red back ground
+   }
+
+   ;----------------------------------------------------------------------------
+   ; User callable function to populate and show the GUI
+   ;----------------------------------------------------------------------------
+   Populate(_inTask := 0, _usingMouse := 1) {
+      ; save these for later
+      this.inTask := _inTask
+      this.usingMouse := _usingMouse
+
+      ; for now, later move task list and populate to user callable functions
+      this.tskViewObj.Populate(this.inTask)
+      ; s/b less than 1 ms
+      rows := this.tskViewObj.Entries
+      If (rows > 0) {
+         If !(this.hasGUI) {
+            warning("Have to rebuild GUI - shouldn't normally need this")
+            this.buildGui()
+         }
+         ; monInfo.activeMonDetails(_usingMouse)
+         monInfo.activeMonDetails(1)   ;2024-01-13 Both cases now
+         this.scale := monInfo.DPI / 96
+         newSize := Round(this.defFontSize * monInfo.ratio)
+         If (newSize != this.fontSize) {
+            this.lvObj.SetFont("s" newSize, "Segoe UI Symbol")
+            this.fontSize := newSize
+            this.clvObj.UpdateFont()
+         }
+         ; debug("Calling lvPopulate")
+         this.lvPopulate()
+         this.postGUI()
+
+      } Else {
+         warning("No task windows")
+      }
+      Return rows
+   }
+   ;----------------------------------------------------------------------------
+   ; Populate the List View
+   ; Assume tasklist has been filled
+   ;----------------------------------------------------------------------------
+   lvPopulate() {
+
+      Static LVM_SETHOVERTIME := 0x1047
+      pidCache := Map()
+      pidCounter := 0
+      ; pidIndex := 0
+
+      ; Enable hot tracking if using the mouse
+      ht := this.usingMouse ? "LV0x8" : "-LV0x8"
+      this.lvObj.Opt("-Redraw " ht)	; supposed to speed up, also set hot tracking based on user mode
+      ; Get Icons
+      rows := this.tskViewObj.Entries
+      ; Get active monitor scaling info and resize the icons
+      ; On a much lower DPI screen, use smaller icon/font (this mon / primary dpi)
+      ; Large Icons (1) and font have to be dynamic based on DPI/Scale
+      ; small vs large will always be relative to starting window so maybe ratio is correct ((monInfo.ratio <= 0.75) ? 0 : 1)
+      ; Should we tie it to the font size? Should it always be large icons?
+      ; Big Icons asl long as we are 100% or larger
+      this.ImageListID := IL_Create(rows, 5, ((this.scale < 1.0) ? 0 : 1))
+      /*
+         Although it is traditional for all viewing modes except Icon and Tile to show small icons,
+         this can be overridden by passing a large-icon list to the SetImageList method and specifying 1
+         (large-icon) for the second parameter. This also increases the height of each row in the
+         ListView to fit the large icon.
+      */
+
+      PrevImageListID := this.lvObj.SetImageList(this.ImageListID, 1) ; See above for 1 as parameter
+      If (PrevImageListID != 0) {
+         IL_Destroy(PrevImageListID)	; garbage collect since same listview is always used
+      }
+      ; Use explorer full paths vs what is in the title
+      ; disabled for now, can slow down if explorer is busy (at work)
+      ;this.cacheExplorerPaths()
+
+      ; Iterate over each Alt-Tab task in taskArray
+      ; Build up items in listview
+      totPinned := totAltMon := totState := totDt := totAss := 0
+      ; Current virtual desktop number
+      vid := cVdt := vda.DtCurrent
+
+      For idxHwnd, itHwnd in this.tskViewObj.Contents {
+         If not WinExist(itHwnd) {
+            ; TODO - also remove it from the list, will it mess up the remaining items in the array?
+            ; debug("Ignoring non existent window " hex(itHwnd))
+            Continue
+         }
+         ;================== Title or Explorer Path ====================
+         ; TODO - Only cache on home computers?
+         If (expTit := this.explorerPathCache.Get(itHwnd, false)) {
+            ; Explorer full path name vs title
+            If (SubStr(expTit, 1, 3) == "::{")
+               title := "  " . this.myGetTitle(itHwnd)
+            Else
+               title := "  " . this.explorerPathCache[itHwnd]
+         } Else {
+            title := "  " . this.myGetTitle(itHwnd)
+         }
+         ; Remove Edge/Google Chrome at end since titles are usaully long
+         ;================== Limit/Pad title length ====================
+         While ((l := StrLen(title)) > this.maxTitLen) {
+            ; First try to split off tail at typicall boundaries
+            ; title := RegExReplace(title, "^(.+) [|-] .+?$", "$1", &matches := 0)
+            ; title := RegExReplace(title, "^(.+)[|\\-].+?$", "$1", &matches := 0)
+            title := RegExReplace(title, "^(.+)(/| - | \| |\\| ).+?$", "$1", &matches := 0)
+            ; Otherwise just trim it down from the front
+            If matches == 0
+               title := "…" . SubStr(Trim(title), l - this.maxTitLen)
+         } Else {
+            ; Pad to minimum width
+            title := Format(this.minTitLenPattern, title)
+         }
+
+         ;==================Window State - Fill Screen/Min/Max/Normal ====================
+         this.getEXInfo(itHwnd, &winState, &pinned, &isChild)
+         ; pidOffset := 0
+         ; Misc Symbols and Pictographs (U+1F300 to U+1F5FF) is a good source 128000 area
+         ; Add two since minimized state is -1
+         stateText := clsTaskGUI.aWinState[winState + 2]
+         totState += StrLen(stateText)
+         ; Close Icon=   ⊠ or ❌
+         ;================== Is window pinned or a MDI window ====================
+         pinText := IsHungAppWindow(itHwnd) ? clsTaskGUI.aWinHung : (pinned ? clsTaskGUI.aWinPin : (isChild ? clsTaskGUI.aWinChild : ""))
+
+         totPinned += StrLen(pinText)
+
+         ;=============== On different monitor or Virual Desktop =================
+         totAltMon += this.MonitorText(&monText, itHwnd, isChild)
+
+         ;==================== On Different Desktop ===================
+         totDt += this.DesktopText(&dtText, itHwnd, cVdt, isChild)
+
+         ;================== Assigned Keys ====================
+         assText := this.AssignedKeyText(itHwnd)
+         totAss += StrLen(assText)
+
+         ;==================ICON====================
+         icon := this.tskViewObj.getMyIcon(itHwnd)
+
+         If (icon == 0 OR IL_Add(this.ImageListID, icon), 0xFFFFFF, 1 == 0) {
+            warning("Failed to load icon for:" title)
+         }
+
+         ;==================Finally ADD Row to Listview====================
+         ; add the item, process Index & win list index in the list view
+         ;❎ ❌ ✖ ☒ ✖ ✖❎❌☒ ✖✕✘×✖✕🗙 " ✖ "
+         res := this.lvObj.Add("Icon" . idxHwnd, title " ", " " stateText " ", pinText, monText, dtText, assText, " ✖ ", idxHwnd)
+         If (res = 0)
+            logError("Error adding:" title)
+      }
+      ; Expand the title and various columns, if they are blank then force to 0 size)
+      ; TODO - if we want to clip the width we would have to query each rows width
+      ; If truncated, use a tooltip to show the full name of the entry
+      ; LVM_GETSTRINGWIDTH will get the required width of the text
+      this.lvObj.ModifyCol(this.indexTitle, "Auto Left")
+      this.lvObj.ModifyCol(this.indexState, (totState > 0) ? "Auto Center" : "0 Integer")
+      ; if nothing, then set col width to 0 vs auto
+      this.lvObj.ModifyCol(this.indexPin, (totPinned > 0) ? "Auto Center" : "0 Integer")
+      this.lvObj.ModifyCol(this.indexMon, (totAltMon > 0) ? "Auto Center" : "0 Integer")
+      this.lvObj.ModifyCol(this.indexDT, (totDt > 0) ? "Auto Center" : "0 Integer")
+      this.lvObj.ModifyCol(this.indexAssKey, (totAss > 0) ? "Auto Center" : "0 Integer")
+      ; Hide the two sorting columns
+      this.lvObj.ModifyCol(this.indexClose, "Auto Center")
+      this.lvObj.ModifyCol(this.indexKey, "0 Integer")
+      ; Color list view
+      ; 18ms
+      Return
+   }
+   ;----------------------------------------------------------------------------
+   ; Return a list of windows not on current monitor or a different desktop
+   ;----------------------------------------------------------------------------
+   WindowsNotMonitor() {
+      tArray := Array()
+      For hWnd in this.tskViewObj.Contents {
+         If ((monInfo.MonitorNearWindow(hWnd) != monInfo.activeMonitor) OR (vda.DtCurrent != vda.DtID(hWnd))) {
+            tArray.Push(hWnd)
+         }
+      }
+      Return tArray
+   }
+
+   ;----------------------------------------------------------------------------
+   ; Return any key assignments for this window handle 【5】  ❬ 5 ❭ 〖5〗
+   ;----------------------------------------------------------------------------
+   AssignedKeyText(hWnd) => (IsObject(this.wtkObj) AND this.wtkObj.Exists(hWnd)) ?
+      "❰" this.wtkObj.Item(hWnd) "❱" : ""	; ⟮ ⟯
+   ;----------------------------------------------------------------------------
+   ; Determine if alternate monitor is above/below/left/right of current one
+   ; So a different icon can be used
+   ;----------------------------------------------------------------------------
+   MonitorText(&monText, hWnd, isChild) {
+
+      Switch monInfo.MonitorDirection(isChild ? GetRoot(hWnd) : hWnd) {
+         Case 0:
+            monText := this.showDef ? "" : ""
+            Return 0
+         Case 1:
+            monText := "⇢"
+         Case 2:
+            monText := "⇠"
+         Case 3:
+            monText := "⇣"
+         Case 4:
+            monText := "⇡"
+      }
+      Return 1
+   }
+   ;----------------------------------------------------------------------------
+   ; Determine if this window is on the current, different or locked on all desktops
+   ; So a different icon can be used
+   ; Flag an alternate desktop as well ⓿
+   ;----------------------------------------------------------------------------
+   DesktopText(&dtText, hWnd, cdVid, isChild) {
+      ; Static dtNum := ["❶", "❷", "❸", "❹", "❺", "❻", "❼", "❽", "❾", "❿"]
+      Static dtNum := ["➀", "➁", "➂", "➃", "➄", "➅", "➆", "➇", "➈", "➉"]
+      ; static dtNum := ["𝟭", "𝟮", "𝟯", "𝟰", "𝟱", "𝟲", "𝟳", "𝟴", "𝟵","➉"]
+      ; For children, make sure we test the top level parent  ↪【1】 〖1〗 http://xahlee.info/comp/unicode_matching_brackets.html
+      mdt := 0
+      hWnd := isChild ? GetRoot(hWnd) : hWnd     ;GetRootOwner
+      Switch vda.DtIsPinned(hWnd) {
+         Case 0:
+            vid := vda.DtID(hWnd)
+            If (vid = cdVid)
+               dtText := this.showDef ? dtNum[vid + 1] : "" 	; this desktop, blank
+            Else If (vid > 9)
+               dtText := "↪↪", mdt++
+            Else If (vid > cdVid)
+               dtText := "↪" dtNum[vid + 1], mdt++	; desktop to the right
+            Else
+               dtText := dtNum[vid + 1] "↩", mdt++ 	; desktop to the left
+         Case 1:	; Locked on all desktops
+            dtText := "🔒Ⓐ", mdt++
+         Default:
+            ; child windows give different values
+            dtText := ""
+      }
+      Return mdt
+   }
+   ;----------------------------------------------------------------------------
+   ; Cache all of the full explorer paths, the title can be truncated or not shown
+   ; The ComObject("Shell.Application").Windows will hang/delay explorer is busy
+   ; Need a method to see if the window is hung first chicken-egg issue if we get it this way
+   ;----------------------------------------------------------------------------
+   cacheExplorerPaths() {
+      this.explorerPathCache.Clear()
+      For oWin in ComObject("Shell.Application").Windows {
+         If (oWin.Name = "File Explorer") {
+            this.explorerPathCache[oWin.HWND] := oWin.Document.Folder.Self.Path
+         }
+      }
+      oWin := ""
+      Return this.explorerPathCache.Count
+   }
+   ;----------------------------------------------------------------------------
+   ; After populating the listview, post the GUI in the correct location
+   ; Do calcs in hiDPI space until we need the GUI_X & GUI_Y, those are in pixel space
+   ;----------------------------------------------------------------------------
+   postGUI() {
+      ;  if we want tooltips LVSETINFOTIP / LVM_SETTOOLTIPS
+
+      ; Margin may need to adjust on different screen to get the same "visual" space around listbox
+      useMargin := Round(this.guiMargin * this.scale) ; * monInfo.scale * monInfo.ratio
+      ; debug("Margin=" useMargin ", Scale=" this.scale ", Ratio=" monInfo.ratio)
+      ;debug("Using Margin " useMargin " pixels, sf=" this.scale ", ratio=" monInfo.ratio)
+      this.guiObj.MarginX := this.guiObj.MarginY := useMargin
+
+      ; Calculate listview height/row in pixels, already confirmed rows > 0
+      rows         := this.tskViewObj.Entries
+      lvs          := this.getListviewDims(rows)
+      this.lastLvs := lvs
+      this.lvObj.move(useMargin, useMargin, lvs.W, lvs.H)
+      ;----------------------------------------------------------------------------
+      ; IF using the mouse then put the GUI up at the mouse location
+      ; Offset so the mouse is over the middle of the first entry icon (mouse doesn't move)
+      ; constrained so it is fully contained on the monitor the mouse is located on
+      ; properly handling hiDPI displays. If not using the mouse center the GUI on the screen
+      ; and place the cursor on the second entry.
+      ;----------------------------------------------------------------------------
+      bdr := Round(this.scale * this.bw)
+      If (this.usingMouse > 0) {
+         ; Hovertime moves the listview cursor with the mouse movement
+         this.lvObj.fastHoverTime()
+         ; Offset the GUI so the top icon is centered on the current mouse position
+         ; The calcs below are in non HiDPI (pure) pixel space
+         iconOffset := -(useMargin + lvs.rowH / 2.0)
+         GUI_x := this.constrain(monInfo.Left, monInfo.Right - lvs.guiW + bdr, monInfo.X + iconOffset)
+         GUI_y := this.constrain(monInfo.Top, monInfo.Bottom - lvs.guiH + bdr, monInfo.Y + iconOffset)
+         selRow := 1
+      } Else {
+         ; 2024-01-13 Now open on window with mouse
+         GUI_x := monInfo.Left + (monInfo.Width - (lvs.guiW + bdr)) / 2
+         GUI_y := monInfo.Top + (monInfo.Height - (lvs.guiH + bdr)) / 2
+         selRow := rows > 1 ? 2 : 1 ; like Alt-Tab, second row if possible
+      }
+      this.lvObj.Modify(selRow, "Select Focus")
+      this.clvObj.UpdateSize(this.usingMouse, selRow) ;CLV
+
+      ; This call can take 50ms or more to complete
+      this.guiObj.Show("AutoSize X " GUI_x " Y " GUI_y)
+      ; Manually round the corners if not Win 11
+      If (this.osVer < 11) {
+         Round10Corners(this.guiObj, this.scale)
+      }
+      ; NOTE - "+Redraw" triggers the custom redraw action
+      this.lvObj.Opt("+Redraw")	; Do the redraw enable here due to CLV Related, Needed for clvObj to trigger (first time or after task switch only)
+      ; Save the column widths for later
+      this.clvObj.lockTitleWidth(this.indexTitle, 1)
+      ; BUG - seem with a17+ need this twice for non default monitor
+      ; Otherwise the GUI is sized incorrectly, have to leave the first one also
+      if (A_ScreenDPI/96 != this.scale)
+         this.guiObj.Show("AutoSize X " GUI_x " Y " GUI_y)
+      ; Make it mostly visible
+      WinSetTransparent(this.guiTransparency, this.guiObj.hWnd)
+
+      ; Close the gui automatically if user clicks outside of it
+      this.setFocusTimer(1)
+      ;35ms to here
+      Return 1
+   }
+   ;----------------------------------------------------------------------------
+   ; Refresh the GUI due to windows state changes,
+   ; Handle cases with the listview size has changed
+   ; The GUI may have been closed by the time we get here so
+   ; always restore at last known position
+   ; Doing our best to avoid any irritating screen flashes on refresh
+   ;----------------------------------------------------------------------------
+   lbRefresh(aWin) {
+      ; Critical 1
+      rowNum := ListViewGetContent("Focused", this.guiObj.hWnd)
+      this.lvObj.Opt("-Redraw")	; prevent change from flashing listview
+      this.tskViewObj.Populate(this.inTask, aWin)   ; Parent window needed for siblings/intask
+      this.lvObj.Delete()
+      this.lvPopulate()
+      this.clvObj.lockTitleWidth(this.indexTitle, 2)
+      this.clvObj.UpdateSize(this.usingMouse) ; CLV
+
+      rows := this.lvObj.GetCount()
+
+      If (rows > 0) {
+         ; Adjust the height/width then autosize the surronding GUI
+         ; The right hand icons may have changed or entries removed
+         lvs := this.getListviewDims(rows)
+         ; TODO - don't shrink width, but listview is auto sizing it's columns
+         ; lvs.W := Max(lvs.W,this.lastLvs.W)
+         ; Surgically remove and replace the rounded borders if size changed since they are manual
+         doRound := (this.osVer < 11 AND (this.lastLvs.W != lvs.W OR this.lastLvs.H != lvs.H))
+         this.lastLvs := lvs
+
+         If (doRound)
+            Round10Corners(this.guiObj, this.scale)
+         ; Force position since it sometimes jumps to 0,0 using multiple desktops
+         ; Or we may have deleted a rwo
+         this.lvObj.Move(, , lvs.W, lvs.H)
+         this.guiObj.Show("AutoSize")
+         ; TODO - why call twice?
+         If (doRound)
+            Round10Corners(this.guiObj, this.scale)
+
+         ; Force on top if another GUI grabbed on top before this, e.g. pinned
+         this.guiObj.Opt("+AlwaysOnTop") ; will flash if moving in front of other window
+         this.lvObj.Opt("+Redraw")
+         ; shows a blank here
+      } Else {
+         logError("Zero rows found postGUI " rows)
+         this.closeGUI(1)
+      }
+      ; Critical 0
+      Return rows
+   }
+
+   ;----------------------------------------------------------------------------
+   ; Return the size and position of the listview within the GUI needed for rows entries
+   ; EMBED Part of this
+   ;----------------------------------------------------------------------------
+   getListviewDims(rows) {
+
+      /*
+           |--------------------------------------|
+           |  |--------------------------------|  |
+           |  |  List View, margin outside     |  |
+           |  |________________________________|  |
+           |______________________________________|
+      
+      */
+      lvs := this.lvObj.lvDims()
+      ; GUI size is predictive so we can place the GUI on specific areas before it resizes itself
+      lvs.guiH := lvs.H + 2 * (this.guiObj.MarginY + this.bw)
+      lvs.guiW := lvs.W + 2 * (this.guiObj.MarginX + this.bw)
+      lvs.rowH := lvs.H / rows
+      Return lvs
+   }
+   ;----------------------------------------------------------------------------
+   ; Callback for the selection changes
+   ; Only for the mouse selection
+   ;----------------------------------------------------------------------------
+   ; lbHighlight(myObj, rNum, Selected) {
+   ;this.lvObj.Modify(rNum, "Select Focus")
+   ;debug("Selected=" Selected ",Val=" rNum)
+   ; }
+   ;----------------------------------------------------------------------
+   ; Wrapper for cbLbSelect, called from bound hotkey
+   ; Handle non-mouse mode along with mouse mode
+   ;----------------------------------------------------------------------
+   lbSelectWrapper(lvColIdx, Key) => this.cbLbSelect(this.lvObj, this.clvObj.LasSelRow, lvColIdx)
+   ;----------------------------------------------------------------------------
+   ; Callback for the Window List GUI
+   ; Only for the mouse selection
+   ; if it was the indexTitle col, it may may the logic cleaner
+   ;----------------------------------------------------------------------------
+   cbLbSelect(myObj, rNum, cNum := 0) {
+      Static delay := 0
+      Global keyPadAssigner
+      Try {
+         this.lvObj.Opt("-Redraw")	; prevent listview change while adjusting other apps
+         ; Col will be zero if not from a hotkey, so determine from mouse location
+         If Not rNum
+            rNum := this.lvObj.GetNext()
+         If Not cNum
+            cNum := this.lvObj.lvMouseRowCol().Col
+         
+         hWnd := this.winIDFromRow(rNum)
+         if (NOT WinExist(hWnd)) {
+            ; May have closed in the mean time
+            warning("Window Handle no longer exists - skipping")
+            this.lvObj.Delete(rNum)
+         }
+         ownerWin := GetRoot(hWnd)
+
+         ; Some of these actions will forece focus elsewhere so disable the timer for now
+         this.setFocusTimer(0)
+         Switch cNum {
+            Case this.indexTitle:
+               ; Select the task
+               this.closeGUI()
+               ; Move the window to this monitor if on an inactive monitor
+               If ( NOT monInfo.OnActiveMonitor(ownerWin) AND ( NOT monInfo.IsWindowOnConnectedMonitor(ownerWin))) {
+                  monInfo.MoveWinToThisMonitor(ownerWin)
+               }
+               this.myWinActivate(hWnd)
+               Return
+
+            Case this.indexState:
+               ; Minimize if not active, activate if minimized
+               ; For MS Project, work on the parent windows only
+               this.tskViewObj.IsParentOverride(&hWnd, &ownerWin)
+               If (monInfo.getWinState(hWnd) = monInfo.WIN_MIN) {
+                  If (rNum == 1)
+                     WinRestore(hWnd)
+                  Else
+                     ShowWinNoActivate(hWnd) ; BUG - this may put the window at bottom of Z-Order, should I use Get/Set windows placement?
+               } Else {
+                  ; If (isWinPinned(ownerWin))
+                  ;    WinSetAlwaysOnTop(0, ownerWin)
+                  MinWinNoActivate(hWnd)
+                  ; Window may minimize to tray so wait for taskview callback to update
+                  If ( NOT IsWindowVisible(ownerWin))
+                     Sleep(100)
+               }
+               Sleep(delay)  ; Allow the task watcher to update the task array
+
+            Case this.indexPin:
+               ; Unpin/Pin/Hung/Child Window
+               ; Get selected/indicated text
+               txt := this.lvObj.GetText(rNum, cNum)
+               Switch txt {
+                  Case clsTaskGUI.aWinHung:
+                     If (this.TryToCloseWindow(ownerWin, hWnd, "")) {
+                        this.lvObj.Delete(rNum)
+                     } Else {
+                        ; Failed to close app, GUI has been closed here
+                        Return
+                     }
+                  Case clsTaskGUI.aWinChild:
+                     ; htt:= ToolTip("Cannot Pin Child Windows")
+                     ttMsg("Cannot Pin Child Windows")
+                     ; May have to temporarrly disable visual styles
+                     ; SendMessage(TTM_SETTIPBKCOLOR,0xFF0000,0x00FF00,hTT,hTT)
+
+                     ; SetTimer(ToolTip,-1000)
+                     ; Do nothing for now
+                  Case clsTaskGUI.aWinPin:
+                     WinSetAlwaysOnTop(0, ownerWin)
+                  Default:
+                     If (monInfo.getWinState(ownerWin) = monInfo.WIN_MIN)
+                        WinRestore(ownerWin)
+                     Else
+                        WinMoveTop(ownerWin)   ; some apps need this, won't trigger a callback
+                     WinSetAlwaysOnTop(1, ownerWin)
+               }
+
+            Case this.IndexMon:
+               ; Move Here or Adjacent monitor
+               If ( NOT monInfo.MoveWinToThisMonitor(ownerWin)) {
+                  monInfo.moveToAdjacentMonitor(ownerWin, 1, 1)
+               }
+               Sleep(100)  ; Allow the task watcher to update the task array
+
+            Case this.indexDT:
+               ; Move this this desktop here or adjacent desktop
+               If (vda.DtIsPinned(ownerWin))
+                  vda.DtUnPinWin(ownerWin)
+               Else If ( NOT vda.MoveWinToThisDesktop(ownerWin)) {
+                  ; Move to next desktop with wrap
+                  ndt := vda.DtNext(1)
+                  If (ndt >= 0) {
+                     vda.DtMoveDt(ownerWin, ndt)
+                  }
+               }
+               Sleep(delay)  ; Allow the task watcher to update the task array
+
+            Case this.indexAssKey:
+               ; Note - Using global keyPadAssigner
+               If (IsSet(keyPadAssigner) AND keyPadAssigner.Exists(hWnd))
+                  keyPadAssigner.removeH2K(hWnd)
+               else
+                  ttMsg("No Hotkey Currently Assigned")
+
+            Case this.indexClose:
+               ; BUG - WIndows explorer owner window is the same as hWnd, and both are killed
+               ;       and thus a sibling/intask listview won't popolate with the remaining explorer windows
+               ;       owner, rootowner and hWnd are always the same value
+               If (this.TryToCloseWindow(ownerWin, hWnd, "")) {
+                  this.lvObj.Delete(rNum)
+               } Else {
+                  ; Failed to close app, GUI has been closed here
+                  Return
+               }
+            ; Rotate between Maximized, Restored and Minimized
+            case this.custColSel_ResMax :
+               this.tskViewObj.IsParentOverride(&hWnd, &ownerWin)
+               Switch monInfo.getWinState(hWnd) {
+                  Case monInfo.WIN_MIN:
+                     ShowWinNoActivate(hWnd) ; will restore to normal or max depending on last setplacement
+                  Case monInfo.WIN_MAX:
+                     MinWinNoActivate(hWnd,1)   ; restore to normal next
+                  Case monInfo.WIN_NORMAL:
+                     MaxWinNoActivate(hWnd)
+                  Case monInfo.WIN_FS:
+                     MakeFullscreen(0, hWnd)
+                  Case monInfo.WIN_CFS:
+                     MinWinNoActivate(hWnd)
+      
+                  Default:
+               }
+               Sleep(delay)  ; Allow the task watcher to update the task array
+
+            Case 0:
+               MsgBox("No Column was selected!")
+
+            default:
+               MsgBox("Unknown Column " cNum " selected!")
+
+         }
+      } Catch As e {
+         elog(e)
+      }
+
+      If (this.lbRefresh(ownerWin)) {
+         ; Try to reselect the row
+         this.lvObj.Modify(rNum, "Select Focus")
+         this.setFocusTimer(1)
+      }
+
+   }
+   ;----------------------------------------------------------------------------
+   ; Translate the list box index to the task list index
+   ; Blank returned if no index found
+   ;----------------------------------------------------------------------------
+   winIDFromRow(idx) {
+      winIndex := this.lvObj.GetText(idx, this.indexKey)
+      Try {
+         Return this.tskViewObj.Item[winIndex]
+      } Catch As e {
+         elog(e, "No Task Found " idx)
+         Return ""
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Keyboard Enter pressed
+   ; Called as a callback, only on Alt-Tab/Enter method
+   ;----------------------------------------------------------------------------
+   ButtonOK(params*) {
+      ; Return the object associated with the focused control
+      FocusedControl := this.guiObj.focusedCtrl
+      ; If task list listview has focus, then grab index and set as active control
+      If (FocusedControl = this.lvObj) {
+         ; operate on the default listview
+         rNum := this.clvObj.LasSelRow
+         ; rNum :=  this.clvObj.lvRowCol().Row
+         taskId := this.winIDFromRow(rNum)
+         ;moving this first may help
+         this.closeGUI()
+         ; debug("OK Activating (" . taskId . ") " . WinGetProcessPath(taskId))
+         this.myWinActivate(taskId)
+      } Else {
+         logError("Error, Control with focus= " FocusedControl)
+      }
+   }
+
+   ;----------------------------------------------------------------------------
+   ; Callback on RMB on listview selection
+   ; Called as a callback
+   ;----------------------------------------------------------------------------
+   GuiContextMenu(GuiHwnd, rNum, IsRightClick, X, Y) {
+      ; Need the owner/parent and possibly the child window for specific menus
+      targetWin := this.winIDFromRow(rNum)
+      /*
+        targetWin is the one from the task list, it may be a child window or parent
+        ownerWin is the top root parent, may be the same as targetWin
+        We operate on this differenetly as some actions won't apply to child windows
+        such as pinning and moving desktops.
+        IsParent indicates the window is a toplevel window (targetWin = ownerWin)
+      */
+      IsParent := this.tskViewObj.IsParentOverride(&targetWin, &ownerWin)
+      ; MS Project windows are treated as parents, so we work on the ownerWin in that case
+      ; Can be in bottom area
+      If (!ownerWin) {
+         ;debug("rNum=" rnum " tskViewObj Length=" this.tskViewObj.Entries " Listview Length=" this.lvObj.GetCount())
+         Return
+      }
+      this.setFocusTimer(0)
+      ; last index used for the context menu
+      this.lastLVIndex := rNum
+      ; Limit length
+      tit := this.myGetTitle(targetWin)
+      If (StrLen(tit) > this.maxTitLen) {
+         tit := SubStr(tit, 1, this.maxTitLen) . "..."
+      }
+      ; Will delete old menu automatically
+      rmb := Menu()
+
+      ; Right mouse button callback
+      cbRmbHandler := this.rmbHandler.Bind(this, ownerWin, targetWin, IsParent)
+
+      ; Pin or UnPin
+      If (IsParent) {
+         action := isWinPinned(ownerWin) ? "UnPin" : "Pin"
+         this.MenuIcon(rmb, tit, action, cbRmbHandler)
+      }
+
+      ; Minimize or restore
+      ; -1 = minimized, 1 = maximized, 0 = normal, 2 = My Fill Screen (not Chrome), 3 = Chrome
+      State := monInfo.getWinState(targetWin)
+      ; debug("State:" State ", Parent:" IsParent)
+      Switch State {
+         Case monInfo.WIN_MIN:
+            ; Minimized
+            If (IsParent)
+               this.MenuIcon(rmb, tit, "Fill Screen", cbRmbHandler)
+            rmb.Add()
+            this.MenuIcon(rmb, getTitle(), "Maximize", cbRmbHandler)
+            this.MenuIcon(rmb, getTitle(), "Restore", cbRmbHandler)
+         Case monInfo.WIN_NORMAL:
+            ; Normal (floating)
+            If (IsParent) {
+               this.MenuIcon(rmb, tit, "Clamp Top", cbRmbHandler)
+               this.MenuIcon(rmb, tit, "Clamp Bottom", cbRmbHandler)
+               this.MenuIcon(rmb, tit, "Clamp Left", cbRmbHandler)
+               this.MenuIcon(rmb, tit, "Clamp Right", cbRmbHandler)
+               rmb.Add()
+               this.MenuIcon(rmb, tit, "Fill Screen", cbRmbHandler)
+            } Else {
+               rmb.Add()
+            }
+            this.MenuIcon(rmb, getTitle(), "Maximize", cbRmbHandler)
+            this.MenuIcon(rmb, getTitle(), "Minimize", cbRmbHandler)
+         Case monInfo.WIN_MAX:
+            ; Maximized
+            If (IsParent) {
+               this.MenuIcon(rmb, tit, "Clamp Top", cbRmbHandler)
+               this.MenuIcon(rmb, tit, "Clamp Bottom", cbRmbHandler)
+               this.MenuIcon(rmb, tit, "Clamp Left", cbRmbHandler)
+               this.MenuIcon(rmb, tit, "Clamp Right", cbRmbHandler)
+               rmb.Add()
+               this.MenuIcon(rmb, tit, "Fill Screen", cbRmbHandler)
+            }
+            this.MenuIcon(rmb, getTitle(), "Restore", cbRmbHandler)
+            this.MenuIcon(rmb, getTitle(), "Minimize", cbRmbHandler)
+         Case monInfo.WIN_FS:
+            ; Need to handle Chrome, we can do any but minimize
+            this.MenuIcon(rmb, tit, "Clamp Top", cbRmbHandler)
+            this.MenuIcon(rmb, tit, "Clamp Bottom", cbRmbHandler)
+            this.MenuIcon(rmb, tit, "Clamp Left", cbRmbHandler)
+            this.MenuIcon(rmb, tit, "Clamp Right", cbRmbHandler)
+            rmb.Add()
+            this.MenuIcon(rmb, getTitle(), "Restore", cbRmbHandler)
+            this.MenuIcon(rmb, getTitle(), "Maximize", cbRmbHandler)
+            this.MenuIcon(rmb, getTitle(), "Minimize", cbRmbHandler)
+         Case monInfo.WIN_CFS:
+            ; Need to handle Chrome, we can do any but minimize
+            this.MenuIcon(rmb, getTitle(), "Minimize", cbRmbHandler)
+         Default:
+      }
+      ;Multi Desktops or Multi Monitors enabled
+      If (IsParent and !vda.DtIsPinned(ownerWin) and (monInfo.MonCount > 1 OR vda.DtCount > 1)) {
+         ; Only show option if window not on current window/desktop
+         If ((vda.DtID(ownerWin) != vda.DtCurrent) or (monInfo.MonitorNearWindow(ownerWin) != monInfo.activeMonitor)) {
+            rmb.Add()
+            this.MenuIcon(rmb, tit, "Move Here", cbRmbHandler)
+         }
+      }
+      If (this.tskViewObj.Entries > 1) {
+         rmb.Add()
+         If (IsParent) {
+            this.MenuIcon(rmb, getTitle(), "Minimize all but", cbRmbHandler)
+         }
+         this.MenuIcon(rmb, getTitle(), "Close all but", cbRmbHandler)
+      }
+      ; Multi Desktops enabled
+      If (IsParent and vda.DtCount > 0) {
+         rmb.Add()
+         ; Pin or Unpin to desktops
+         Switch vda.DtIsPinned(ownerWin) {
+            Case 1:
+               this.MenuIcon(rmb, tit, "UnLock on all Desktops", cbRmbHandler)
+            Case 0:
+               this.MenuIcon(rmb, tit, "Lock on all Desktops", cbRmbHandler)
+            Default:
+         }
+         ; Non-pinned apps
+         If (vda.DtIsPinned(ownerWin) = 0) {
+            winDt := vda.DtID(ownerWin)
+            ; Loop over desktops
+            Loop vda.DtCount {
+               tgtDt := A_Index - 1
+               If (tgtDt != winDt) {
+                  ; User desktop name
+                  this.MenuIcon(rmb, vda.DtName[tgtDt], "Move to Desktop " tgtDt + 1, cbRmbHandler)
+               }
+            }
+         }
+      }
+      ; Code to move between desktops
+      rmb.Add()
+      ; Move all windows not on this monitor here, ignores desktops
+      ; Used if monitor is off and can't see the windows
+      ofw := this.WindowsNotMonitor().Length
+      If (ofw > 0) {
+         this.MenuIcon(rmb, "This Monitor, " ofw " window(s) total", "Move Offscreen Windows To", cbRmbHandler)
+      }
+      this.MenuIcon(rmb, getTitle(), "Close", cbRmbHandler)
+      ; Save and restore the mouse position after the menu
+      CoordMode("Mouse", "Screen")
+      MouseGetPos(&Mx, &My)	; raw pixels
+      ; Post the menu
+      rmb.Show()
+
+      ; Menu closed here, restore the mouse and enable the focus timer
+      MouseMove(Mx, My)
+      this.setFocusTimer(1)
+
+      Return
+
+      ; Return formatted title, if child then prefix with icon
+      getTitle() {
+         If (targetWin != ownerWin)
+            Return "◱ " tit
+         Else
+            Return tit
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Create a menu entry with the action name/icon
+   ; TODO - allow passing in a parameter for shortcut position
+   ;----------------------------------------------------------------------------
+   MenuIcon(menuObj, Title, icon, callBack) {
+      Try {
+         icn := this.menuIcons[StrLower(icon)]
+         ; Action Icon and Name must be the same
+         menuObj.Add(icon ": " Title, callBack)
+         menuObj.SetIcon(icon ": " Title, icn, , Round(this.scale * 16))
+      } Catch As e {
+         elog(e, "Icon " icon)
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Callback for Right Mouse Button Menu
+   ; Called as a callback
+   ;----------------------------------------------------------------------------
+   rmbHandler(ownerWin, targetWin, IsParent, ItemName, ItemPos, menuObj) {
+
+      If (ownerWin = 0) {
+         menuObj.Delete()
+         logError("Null window returned")
+         Return
+      }
+      ; Disable focus timer as GUIs are moved around
+      this.setFocusTimer(0)
+      ; Only want the command part
+      ItemName := SubStr(ItemName, 1, InStr(ItemName, ":") - 1)
+      noCaption := hasNoCaption(ownerWin)
+      ; debug(ItemName . " " WinGetProcessPath(ownerWin))
+      Static delay := 0
+      Switch ItemName, "On" {
+
+         Case "Move Here":
+            ; Make sure it is on the current desktop
+            ; would like to do last, but windows manipulation functions seem
+            ; to only work on current desktop
+            monInfo.MoveWinToThisMonitor(ownerWin)
+            vda.MoveWinToThisDesktop(ownerWin)
+
+            menuObj.Delete()
+            this.closeGUI()
+            Return
+
+         Case "Pin":
+            ; BUG - sometimes pinning doesn't work (OneNote)
+            If (monInfo.getWinState(ownerWin) = monInfo.WIN_MIN)
+               WinRestore(ownerWin)
+            Else
+               WinMoveTop(ownerWin)   ; some apps need this, won't tigger a callback
+            WinSetAlwaysOnTop(1, ownerWin)
+            ; NOTE - Switcher may be blanked here by other window
+            Sleep(delay)  ; Allow the task watcher to update the task array
+
+         Case "UnPin":
+            WinSetAlwaysOnTop(0, ownerWin)
+
+         Case "Minimize":
+            ; don't want it pinned also
+            ; If (isWinPinned(ownerWin))
+            ;    WinSetAlwaysOnTop(0, ownerWin)
+            MinWinNoActivate(targetWin)
+            ; If window was closed to tray (destroyed), let it time out for callback to remove it from the list
+            WinWait(targetWin, , 0.10)
+            Sleep(delay)  ; Allow the task watcher to update the task array
+         Case "Restore":
+            If (noCaption)
+               MakeFullscreen(0, ownerWin)
+            Else
+               WinRestore(targetWin)
+            Sleep(delay)  ; Allow the task watcher to update the task array
+            ; menu losses focus and closes
+
+         Case "Fill Screen":
+            MakeFullscreen(1, ownerWin)
+            Sleep(delay)  ; Allow the task watcher to update the task array
+
+         Case "Maximize":
+            If (noCaption)
+               MakeFullscreen(0, ownerWin)
+            WinMaximize(targetWin)
+
+            Sleep(delay)  ; Allow the task watcher to update the task array
+            ; menu losses focus and closes
+
+         Case "Clamp Left":
+            ; in MoverRisizer
+            If (noCaption)
+               MakeFullscreen(0, ownerWin)
+            clampWindow(ownerWin, 1)
+
+         Case "Clamp Right":
+            ; in MoverRisizer
+            If (noCaption)
+               MakeFullscreen(0, ownerWin)
+            clampWindow(ownerWin, 2)
+
+         Case "Clamp Top":
+            ; in MoverRisizer
+            If (noCaption)
+               MakeFullscreen(0, ownerWin)
+            clampWindow(ownerWin, 3)
+
+         Case "Clamp Bottom":
+            ; in MoverRisizer
+            If (noCaption)
+               MakeFullscreen(0, ownerWin)
+            clampWindow(ownerWin, 4)
+
+         Case "UnLock on all Desktops":
+            vda.DtUnPinWin(ownerWin)
+
+         Case "Lock on all Desktops":
+            vda.DtPinWin(ownerWin)
+
+         Case "Move Offscreen Windows To":
+            For i, hwnd in this.WindowsNotMonitor() {
+               ; debug("Moving " WinGetTitle(hwnd) " here")
+               monInfo.MoveWinToThisMonitor(hwnd)
+               vda.MoveWinToThisDesktop(hwnd)
+            }
+
+         Case "Minimize all but":
+            For i, hwnd in this.tskViewObj.Contents {
+               If (hwnd != targetWin) {
+                  IsParent := this.tskViewObj.IsParentOverride(&hwnd, &oWin)
+                  ; If (isWinPinned(oWin))
+                  ;    WinSetAlwaysOnTop(0, oWin)
+                  WinMinimize(hwnd)
+                  ; If window was closed to tray (destroyed), let it time out for callback to remove it from the list
+                  WinWait(hwnd, , 0.10)
+
+               }
+               this.myWinActivate(targetWin)
+            }
+
+         Case "Close all but":
+            ; Loop/remove in reverse order to maintain relative index into list
+            ; should loop on view row not task list (may be sorted)
+            index := this.lvObj.GetCount()
+            While (index > 0) {
+               hwnd := this.winIDFromRow(index)
+               If (hwnd != targetWin) {
+                  tt := WinGetTitle(hwnd)
+                  If (this.TryToCloseWindow(ownerWin, hwnd, menuObj)) {
+                     ; debug("Closed:" tt)
+                     this.lvObj.Delete(index)
+                  } Else {
+                     warning("Failed Need to close:" tt)
+                     ; Windows would be closed here, so bail
+                     Return
+                  }
+               }
+               index--
+            } Else {
+               warning("Didn't find any windows to close")
+            }
+
+         Case "Close":
+            If (this.TryToCloseWindow(ownerWin, targetWin, menuObj)) {
+               ; Remove the entry if this is an inTask remove
+               If (this.inTask) {
+                  this.lvObj.Delete(this.lastLVIndex)
+               }
+            } Else {
+               Return
+            }
+
+         Default:
+            ; Desktop Move Option would be done here
+            pos := RegExMatch(ItemName, "Move.+?([0-9]+)", &res)
+            If (pos = 1) {
+               dt := res[1] - 1
+               vda.DtMoveDt(ownerWin, dt)
+            }
+      }
+      ; Close the pop-up menu, leave the gui
+      menuObj.Delete()
+      ; GUI may have been closed by focus timer
+      If (this.lbRefresh(ownerWin))
+         this.setFocusTimer(1)
+      Return
+   }
+   /*----------------------------------------------------------------------------\
+    Try to close a window
+   \----------------------------------------------------------------------------*/
+   TryToCloseWindow(ownerWin, targetWin, menuObj) {
+      ; Move this into its own method, return true if kill worked, false if failed
+      ; false indictes we should return immediately
+      ; Note WinClose(myWin), this will close the entire excel or office app, not just the window
+      Try {
+         ; This should be like Alt-F4 so MDI windows close properly
+         ; SendMessages waits for response, 5000ms default timeout and throws an error (sometimes)
+         ; SendMessage will timeout if it fails, result is 0 in either case
+         ; TODO - myWin is the root owner, but for sibling menus it won't work
+         ; SendMessage(Msg , wParam, , , WinTitle, , , , Timeout])
+         isHung := IsHungAppWindow(ownerWin)
+         ; Could also send a NULL message with a timeout to see if window is responding
+         tit := WinGetTitle(targetWin)
+         If (isHung) {
+            If (IsObject(menuObj))
+               menuObj.Delete()
+            this.closeGUI()
+
+            ans := MsgBox("'" tit "' is hung and needs to be forcefully killed, Ok?", , "YesNo")
+            If (ans = "Yes") {
+               pid := WinGetPID(ownerWin)
+               WinKill(ownerWin, 3.0)
+               Try {
+                  ; Will trigger catch if sucessfully killed above
+                  WinGetPID(ownerWin)
+                  If ProcessClose(pid)
+                     dlog("ProcessClose worked for Process " pid)
+                  Else
+                     Warning("Failed to ProcessClose process " pid)
+               } Catch As e {
+                  dlog("WinKill worked for process " pid)
+               }
+            }
+            Return false
+         } Else {
+            now := A_TickCount
+            Try {
+               /*
+               ; NOTE
+               ;   - This may fail/timeout if app only minimizes itself to tray or triggers a save dialog
+               ;   - This may flash the task list GUI (or bring it to a lower Z-Order), minimizing first helps
+               */
+               res := SendMessage(WM_SYSCOMMAND, SC_CLOSE, , , targetWin, , , , 500)
+               dlog("SendMessage wait period is " (A_TickCount - now) " ms for:" tit)
+               wp := 2.0 - (A_TickCount - now)   ; no timeout wait period
+               ; response = 0 if closed OK
+            } Catch TimeoutError As e {
+               ; Most common for no response (say dialog was up), use a short timeout to check if closed
+               Warning("TimeoutError SendMessage, time=" (A_TickCount - now) " ms for:" tit)
+               wp := 0.5 ; timeout default, probably a dialog open so close quickly
+            } Catch OSError As e {
+               ; An OSError is thrown if a message could not be sent. For example,
+               ; if the target window is running at a higher integrity level than the script
+               ; (i.e. it is running as admin while the script is not), messages may be blocked.
+               elog(e, "OSError SendMessage")
+               myWinDidntClose()
+               Return false
+            } Catch TargetError As e {
+               ; A TargetError is thrown if the window or control could not be found.
+               elog(e, "TargetError SendMessage")
+               myWinDidntClose()
+               Return false
+            }
+            ;
+            ; Wait for the window to actually close before proceeding
+            ;
+            If (!WaitForWinClose(targetWin, wp)) {
+               myWinDidntClose()
+               Return false
+            }
+            dlog("Time to Close '" tit "' is " (A_TickCount - now) " ms")
+         }
+
+      } Catch As e {
+         elog(e)
+         myWinDidntClose()
+         Return false
+      }
+      Return true
+
+      ;
+      ; Close the GUI and let the user handle the delayed close
+      ;
+      myWinDidntClose() {
+         If (IsObject(menuObj))
+            menuObj.Delete()
+         this.closeGUI()
+         warning("Failed to close target GUI " hex(targetWin))
+         Try {
+            If (WinExist(ownerWin)) {
+               this.tskViewObj.windowToTop(ownerWin)
+            }
+            ;MsgBox( tit "`nTimed out, is a dialog open? ", ,0x30+0x1000)
+         } Catch As e {
+            ; We could do a WinKill(myWin) but it may be due to a save dialog timeout, so lets just notify the user
+            MsgBox("Error '" e.Message "' after timeout on " tit " maybe it closed?")
+         }
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Reset then optionally set the Focus timer
+   ;----------------------------------------------------------------------------
+   setFocusTimer(how) => SetTimer(this.timerFocus, how ? 50 : 0)
+   ;-------------------------------------------------------------------------------
+   ; Check to see if pop-up GUI loses focus and if so close it
+   ; Called from a timer
+   ;-------------------------------------------------------------------------------
+   CheckGuiFocusTimer() {
+      ; if window exists AND it doesn't have focus, then close it
+      If (this.Active) {
+         ; Gui is up but lost focus, close it
+         If (WinActive(this.guiObj.hWnd) = 0) {
+            SetTimer(, 0)
+            this.closeGUI()
+         }
+      } Else {
+         ; Timer shouldn't normally be running here
+         SetTimer(, 0)
+         logError("Stopping CheckGuiFocusTimer: Expected GUI to be active but it wasn't")
+      }
+   }
+   ;-------------------------------------------------------------------------------
+   ; Callback when a deactivation occurs for the switcher gui
+   ; Called from a  callback
+   ;-------------------------------------------------------------------------------
+   ; setFocusTimer(how) => debug("Ignoring Focus Timer " how)
+   ; WM_ACTIVATE(wParam, lParam, msg, hwnd) {
+   ;    If (hwnd = this.guiObj.hWnd) {
+   ;       If (this.Active) {
+   ;          If (wParam & 0xFF = 0) {
+   ;             If (WinActive(this.guiObj.hWnd) = 0) {
+   ;                ; debug("GUI being deactivated")
+   ;                this.closeGUI()
+   ;             }
+   ;          }
+   ;       }
+   ;    }
+   ; }
+
+   ;----------------------------------------------------------------------------
+   ; Called externally when first using the Alt-Tab to move up/down the window list
+   ;----------------------------------------------------------------------------
+   setAltTimer() => SetTimer(this.timerAlt, 40)
+   ;----------------------------------------------------------------------------
+   ; Check if Alt Key is released during Alt-Tabbing
+   ; Called from a timer every 40ms
+   ;----------------------------------------------------------------------------
+   CheckAltTimer() {
+      ; If Alt key not being pressed down, select current entry and exit
+      If (this.Active) {
+         If !GetKeyState("Alt", "P") {
+            SetTimer(, 0)
+            ; This will switch to the selection
+            ; Seems like the Alt key down can still get through to some apps which may bring up the window hints (excel)
+            ; debug("Alt Key Up")
+            this.ButtonOK()
+         }
+      } Else {
+         logError("Expected guiObj to be valid")
+         ; could cancel the timer here
+         SetTimer(, 0)
+         this.closeGUI()
+      }
+   }
+   ;----------------------------------------------------------------------------
+   ; Shut the timers down and close the GUI if it is up
+   ;----------------------------------------------------------------------------
+   closeGUI(params*) {
+
+      ; Stop any timers (in case they may still be running)
+      SetTimer(this.timerFocus, 0)
+      SetTimer(this.timerAlt, 0)
+      ; close the GUI using window animation
+      If (this.Active) {
+         Try {
+            ; making transparent/opaque is best method to show complex window all at once on slower comptuers.
+            WinSetTransparent(0, this.guiObj.hWnd)
+            ; debug("closeGUI: Hiding Main Parent Only")
+
+            this.guiObj.Hide()
+         } Catch As e {
+            elog(e)
+         }
+      } Else {
+         logError("Gui already closed")
+      }
+      this.lvObj.Delete()
+      ; not sure if these two are necessary
+      this.lvObj.move(, , 0, 0)
+      this.guiObj.move(0, 0, 0, 0)	; seems to prevent a draw flash if the order/number changed on next draw
+   }
+   ;----------------------------------------------------------------------------
+   ; Return Multiple points of info for a window
+   ; Called when showing task list for each entry
+   ;----------------------------------------------------------------------------
+   getEXInfo(hWnd, &state, &pinned, &isChild) {
+
+      ex := WinGetExStyle(hWnd)
+      ;state := WinGetMinMax(this.tskViewObj.getTLParent(hWnd)) ; -1 = minimized, 1 = maximized, 0 = normal
+      pinned := ex & WS_EX_PINNED
+      If (ex & WS_EX_MDICHILD) {
+         isChild := 1
+         state := IsIconic(hWnd) ? monInfo.WIN_MIN : IsZoomed(hWnd) ? monInfo.WIN_MAX : monInfo.WIN_NORMAL
+      } Else {
+         rtHwnd := GetRoot(hWnd) ; NOTE - does it matter if it is Root or RootOwner???
+         state := WinGetMinMax(rtHwnd)	; -1 = minimized, 1 = maximized, 0 = normal
+         If (rtHwnd != hWnd) {
+            isChild := 1
+         } Else {
+            isChild := (ex = WS_DIALOG)	; Outlook reminders
+         }
+         ; Pinned only applies to root owner, not children
+         pinned := WinGetExStyle(rtHwnd) & WS_EX_PINNED
+         ; Expand to include chrome, maybe use getWinState above.
+         If (state > monInfo.WIN_MIN) {
+            ; My maximized will by 00
+            style := WinGetStyle(hWnd)
+            If (!(style & WS_OVERLAPPEDWINDOW)) {
+               state := monInfo.WIN_FS
+               ; Chrome full screen will be 0B
+            } Else If ((style & WS_CAP) = 0) {
+               state := monInfo.WIN_CFS
+            }
+         }
+      }
+      ;style := WinGetStyle(hWnd)
+      ; If fill screen, override the state
+      ; -1 = minimized, 1 = maximized, 0 = normal, 2 = fillScreen
+      ;state := (style & WS_CAP) ? state : 2
+
+      Return state
+   }
+   ;===========================================================================================================
+   ; Functionize some cryptic old style AHK calls
+   ;===========================================================================================================
+   myWinActivate(hWnd) {
+      this.tskViewObj.windowToTop(hWnd)
+   }
+   ;----------------------------------------------------------------------------
+   ; Constrain a number between left and right boundaries
+   ;----------------------------------------------------------------------------
+   constrain(l, r, a) => (a > r ? r : (a < l ? l : a))
+   ;----------------------------------------------------------------------------
+   ; Return the title or dummy tet
+   ;----------------------------------------------------------------------------
+   myGetTitle(hWnd) => (WinExist(hWnd) ? WinGetTitle(hWnd) : "<NULL>")
+
+}
+;----------------------------------------------------------------------
+; Enhanced List View Class with some helper functions
+;----------------------------------------------------------------------
+Class LVPlus extends Gui.ListView {
+   ; Static so this is executed at file parse time, before execution starts
+   Static __New() {
+      For p in this.Prototype.OwnProps() {
+         If (p != "__Class") {
+            ; For properties below, add them to the base prototype class
+            ; super is the listview class itself on which we are based
+            super.Prototype.DefineProp(p, this.Prototype.GetOwnPropDesc(p))
+         }
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Return the dimensions of the listview needed for contents
+   ;----------------------------------------------------------------------
+   lvDims() {
+      ; rows-1, due to the header not being shown
+      Res := SendMessage(LVM_APPROXIMATEVIEWRECT, this.GetCount() - 1, 0, , this.hWnd)
+
+      ;-- Extract values (UShort) and assign to output variables
+      H := Res >>> 16	;-- HIWORD
+      W := Res & 0xFFFF	;-- LOWORD
+
+      lvs := Object()
+      ; Round up one pixel as a buffer to make sure scroll bars don't show up on certain cases when scaling
+      ; W/H are in pixels now due to -HIDPI option on GUI, no need to adjust
+      lvs.H := H + 1
+      lvs.W := W + 1
+      Return lvs
+   }
+   ;----------------------------------------------------------------------
+   ; Return a width of a column
+   ;----------------------------------------------------------------------
+   GetColWidth(n) => SendMessage(0x101D, n - 1, 0, this.hwnd)
+   ;----------------------------------------------------------------------
+   ; Set the fastest hovertime we can
+   ;----------------------------------------------------------------------
+   fastHoverTime() => SendMessage(0x1047, 0, 1, , this.hWnd)
+   ; -------------------------------------------------------------------------------------------------------------------
+   ; -------------------------------------------------------------------------------------------------------------------
+   MapIndexToID(Row) { ; provides the unique internal ID of the given row number
+      Return SendMessage(0x10B4, Row - 1, 0, this.HWND) ; LVM_MAPINDEXTOID
+   }
+   ;----------------------------------------------------------------------
+   ; Return the column that was clicked on a listview with the mouse
+   ;----------------------------------------------------------------------
+   lvMouseRowCol() {
+      Static bufLVInfo := LVHITTESTINFO()
+      lvInfo := Map()
+      lvInfo.Col := lvInfo.Row := 0
+
+      Try {
+
+         ; Get the current cursor position in screen coordinates, same position in a POINT and LVInfo Buffer
+         DllCall("User32.dll\GetCursorPos", "Ptr", bufLVInfo)
+         ; Convert them to client coordinates related to the ListView
+         DllCall("User32.dll\ScreenToClient", "Ptr", this.hWnd, "Ptr", bufLVInfo)
+         ; Send a LVM_SUBITEMHITTEST to the ListView
+         ErrorLevel := SendMessage(LVM_SUBITEMHITTEST, 0, bufLVInfo, , "ahk_id " this.hWnd)
+         ; If no item was found on this position, the return value is empty
+         If (ErrorLevel = -1) {
+            warning("lvMouseRowCol did not return a row or column for listview " this.hWnd)
+         } else {
+            ; Row-1 = 12 (0 based)
+            ; Col-1 = 16 (0 based)
+            lvInfo.Row := bufLVInfo.Row + 1
+            lvInfo.Col := bufLVInfo.Col + 1
+         }
+
+      } Catch As e {
+         elog(e)
+      }
+      Return lvInfo
+   }
+
+}
+dlog("Include File Loaded")

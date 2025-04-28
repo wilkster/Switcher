@@ -1,0 +1,181 @@
+#Requires AutoHotkey v2.0
+/*
+https://www.autohotkey.com/boards/viewtopic.php?t=115952
+		global WindowProcNew := CallbackCreate(WindowProc)  ; Avoid fast-mode for subclassing.
+		global WindowProcOld := DllCall("user32\" SetWindowLong, "Ptr", GuiObj.Hwnd, "Int", GWL_WNDPROC, "Ptr", WindowProcNew, "Ptr")
+
+*/
+/**
+ * Implement theming for the contols on this GUI, call when GUI controls are all created and destroy when GUI is destroyed
+ * @param guiObj GUI Object
+ * @param {Integer} DarkMode true/false for dark mode 
+ */
+Class ControlThemes {
+   __New(guiObj, DarkMode := false) {
+      this.GWL_WNDPROC         := -4
+      this.guiObj              := guiObj
+      this.DarkMode            := DarkMode
+      this.TextBackgroundBrush := 0
+      this.WindowProcNew       := 0
+      this.SetWindowAttribute()
+      this.SetWindowTheme()
+   }
+   __Delete() {
+      if (this.WindowProcNew)
+         CallbackFree(this.WindowProcNew)      
+      if (this.TextBackgroundBrush)
+         DllCall("Gdi32\DeleteObject", "Ptr", this.TextBackgroundBrush)
+   }
+
+   SetWindowAttribute() {
+      this.DarkColors          := Map("Background", "0x202020", "Controls", "0x404040", "Font", "0xE0E0E0")
+      this.TextBackgroundBrush := DllCall("gdi32\CreateSolidBrush", "UInt", this.DarkColors["Background"], "Ptr")
+      this.PreferredAppMode    := Map("Default", 0, "AllowDark", 1, "ForceDark", 2, "ForceLight", 3, "Max", 4)
+
+      If (VerCompare(A_OSVersion, "10.0.17763") >= 0) {
+         DWMWA_USE_IMMERSIVE_DARK_MODE := 19
+         If (VerCompare(A_OSVersion, "10.0.18985") >= 0) {
+            DWMWA_USE_IMMERSIVE_DARK_MODE := 20
+         }
+         uxtheme := DllCall("kernel32\GetModuleHandle", "Str", "uxtheme", "Ptr")
+         SetPreferredAppMode := DllCall("kernel32\GetProcAddress", "Ptr", uxtheme, "Ptr", 135, "Ptr")
+         FlushMenuThemes := DllCall("kernel32\GetProcAddress", "Ptr", uxtheme, "Ptr", 136, "Ptr")
+         Switch this.DarkMode {
+            Case true:
+               DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", this.guiObj.hWnd, "Int", DWMWA_USE_IMMERSIVE_DARK_MODE, "Int*", true, "Int", 4)
+               DllCall(SetPreferredAppMode, "Int", this.PreferredAppMode["ForceDark"])
+               DllCall(FlushMenuThemes)
+               this.guiObj.BackColor := this.DarkColors["Background"]
+            default:
+               DllCall("dwmapi\DwmSetWindowAttribute", "Ptr", this.guiObj.hWnd, "Int", DWMWA_USE_IMMERSIVE_DARK_MODE, "Int*", false, "Int", 4)
+               DllCall(SetPreferredAppMode, "Int", this.PreferredAppMode["Default"])
+               DllCall(FlushMenuThemes)
+               this.guiObj.BackColor := "Default"
+         }
+      }
+   }
+
+   /**
+    * Called internall to setup the themes
+    */
+   SetWindowTheme() {
+      Static GWL_STYLE          := -16
+      Static ES_MULTILINE       := 0x0004
+      Static LVM_GETTEXTCOLOR   := 0x1023
+      Static LVM_SETTEXTCOLOR   := 0x1024
+      Static LVM_GETTEXTBKCOLOR := 0x1025
+      Static LVM_SETTEXTBKCOLOR := 0x1026
+      Static LVM_GETBKCOLOR     := 0x1000
+      Static LVM_SETBKCOLOR     := 0x1001
+      Static LVM_GETHEADER      := 0x101F
+      Static GetWindowLong      := A_PtrSize = 8 ? "GetWindowLongPtr" : "GetWindowLong"
+      Static SetWindowLong      := A_PtrSize = 8 ? "SetWindowLongPtr" : "SetWindowLong"
+             Init               := false
+             LV_Init            := false
+
+      Mode_Explorer  := (this.DarkMode ? "DarkMode_Explorer" : "Explorer") ; ClearMode_Explorer?
+      Mode_CFD       := (this.DarkMode ? "DarkMode_CFD" : "CFD")
+      Mode_ItemsView := (this.DarkMode ? "DarkMode_ItemsView" : "ItemsView")
+
+      For hWnd, GuiCtrlObj in this.guiObj {
+         Switch GuiCtrlObj.Type {
+            Case "UpDown":
+               DllCall("uxtheme\SetWindowTheme", "Ptr", GuiCtrlObj.hWnd, "Str", Mode_Explorer, "Ptr", 0)
+            Case "Button", "CheckBox", "ListBox", "UpDown", "PicButton":
+               DllCall("uxtheme\SetWindowTheme", "Ptr", GuiCtrlObj.hWnd, "Str", Mode_Explorer, "Ptr", 0)
+            Case "ComboBox", "DDL":
+               DllCall("uxtheme\SetWindowTheme", "Ptr", GuiCtrlObj.hWnd, "Str", Mode_CFD, "Ptr", 0)
+            Case "Edit":
+               If (DllCall("user32\" GetWindowLong, "Ptr", GuiCtrlObj.hWnd, "Int", GWL_STYLE) & ES_MULTILINE) {
+                  DllCall("uxtheme\SetWindowTheme", "Ptr", GuiCtrlObj.hWnd, "Str", Mode_Explorer, "Ptr", 0)
+               } Else {
+                  DllCall("uxtheme\SetWindowTheme", "Ptr", GuiCtrlObj.hWnd, "Str", Mode_CFD, "Ptr", 0)
+               }
+            Case "ListView":
+               If !(LV_Init) {
+                  Static LV_TEXTCOLOR := SendMessage(LVM_GETTEXTCOLOR, 0, 0, GuiCtrlObj.hWnd)
+                  Static LV_TEXTBKCOLOR := SendMessage(LVM_GETTEXTBKCOLOR, 0, 0, GuiCtrlObj.hWnd)
+                  Static LV_BKCOLOR := SendMessage(LVM_GETBKCOLOR, 0, 0, GuiCtrlObj.hWnd)
+                  LV_Init := true
+               }
+               GuiCtrlObj.Opt("-Redraw")
+               Switch this.DarkMode {
+                  Case true:
+                  {
+                     SendMessage(LVM_SETTEXTCOLOR, 0, this.DarkColors["Font"], GuiCtrlObj.hWnd)
+                     SendMessage(LVM_SETTEXTBKCOLOR, 0, this.DarkColors["Background"], GuiCtrlObj.hWnd)
+                     SendMessage(LVM_SETBKCOLOR, 0, this.DarkColors["Background"], GuiCtrlObj.hWnd)
+                  }
+                  default:
+                  {
+                     SendMessage(LVM_SETTEXTCOLOR, 0, LV_TEXTCOLOR, GuiCtrlObj.hWnd)
+                     SendMessage(LVM_SETTEXTBKCOLOR, 0, LV_TEXTBKCOLOR, GuiCtrlObj.hWnd)
+                     SendMessage(LVM_SETBKCOLOR, 0, LV_BKCOLOR, GuiCtrlObj.hWnd)
+                  }
+               }
+               DllCall("uxtheme\SetWindowTheme", "Ptr", GuiCtrlObj.hWnd, "Str", Mode_Explorer, "Ptr", 0)
+
+               ; To color the selection - scrollbar turns back to normal
+               ;DllCall("uxtheme\SetWindowTheme", "Ptr", GuiCtrlObj.hWnd, "Str", Mode_ItemsView, "Ptr", 0)
+
+               ; Header Text needs some NM_CUSTOMDRAW coloring
+               LV_Header := SendMessage(LVM_GETHEADER, 0, 0, GuiCtrlObj.hWnd)
+               DllCall("uxtheme\SetWindowTheme", "Ptr", LV_Header, "Str", Mode_ItemsView, "Ptr", 0)
+               GuiCtrlObj.Opt("+Redraw")
+            Case "Text":
+               ; Leave these along since I fill them in with colors
+            Case "StatusBar":
+               ; Specify -Theme on the control to set the backbround color
+            Default:
+               OutputDebug("Unsuppored Theme for " GuiCtrlObj.Type)
+         }
+      }
+      If ( NOT Init) {
+         this.WindowProcNew       := CallbackCreate(this.WindowProc.bind(this),,4)  ; Avoid fast-mode for subclassing., parameter count it crucial
+         this.WindowProcOld       := DllCall("user32\" SetWindowLong, "Ptr", this.guiObj.Hwnd, "Int", this.GWL_WNDPROC, "Ptr", this.WindowProcNew, "Ptr")
+      }
+   }
+   /**
+    * Callback to handle control messages, tweak colors for the items we are aware of
+    * @param hwnd handle to window (I think)
+    * @param uMsg control type
+    * @param wParam handle to control
+    * @param lParam 
+    * @returns {Float | Integer | String} 
+    */
+   WindowProc(hwnd, uMsg, wParam, lParam) {
+      Critical("On")
+      Static WM_CTLCOLOREDIT    := 0x0133
+      Static WM_CTLCOLORLISTBOX := 0x0134
+      Static WM_CTLCOLORBTN     := 0x0135
+      Static WM_CTLCOLORSTATIC  := 0x0138
+      Static WM_CTLCOLORDLG     := 0x0136
+      Static WM_PRINTCLIENT     := 0x0318
+      Static WM_COMMAND         := 0x0111
+      Static DC_BRUSH           := 18
+
+      If (this.DarkMode) {
+         Switch uMsg {
+            Case WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX:
+               DllCall("gdi32\SetTextColor", "Ptr", wParam, "UInt", this.DarkColors["Font"])
+               DllCall("gdi32\SetBkColor", "Ptr", wParam, "UInt", this.DarkColors["Controls"])
+               DllCall("gdi32\SetDCBrushColor", "Ptr", wParam, "UInt", this.DarkColors["Controls"], "UInt")
+               Return DllCall("gdi32\GetStockObject", "Int", DC_BRUSH, "Ptr")
+            Case WM_CTLCOLORBTN:
+               DllCall("gdi32\SetDCBrushColor", "Ptr", wParam, "UInt", this.DarkColors["Background"], "UInt")
+               Return DllCall("gdi32\GetStockObject", "Int", DC_BRUSH, "Ptr")
+            Case WM_CTLCOLORSTATIC:
+               ; this will break background colors that are set
+               ; DllCall("gdi32\SetTextColor", "Ptr", wParam, "UInt", this.DarkColors["Font"])
+               ; DllCall("gdi32\SetBkColor", "Ptr", wParam, "UInt", this.DarkColors["Background"])
+               ; Return this.TextBackgroundBrush
+            Case WM_CTLCOLORDLG: ; not sure about this one
+               Return this.TextBackgroundBrush
+            ; Default:
+            ;    debug("Uknown Control:" hex(uMsg))
+         }
+      }
+      Critical("Off") ; important, needs to be paired
+      Return DllCall("user32\CallWindowProc", "Ptr", this.WindowProcOld, "Ptr", hwnd, "UInt", uMsg, "Ptr", wParam, "Ptr", lParam)
+   }
+}

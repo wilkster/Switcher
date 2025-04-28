@@ -1,0 +1,642 @@
+#Requires AutoHotkey v2.1-a.9
+#Include ..\common\dllFactory.ahk2
+#include ..\common\Structures.ahk2            ; Common structures used in 2.1 Alpha
+; ======================================================================================================================
+; Namespace:      LV_Colors
+; Function:       Individual row and cell coloring for AHK ListView controls.
+; Tested with:    AHK 2.0.2 (U32/U64)
+; Tested on:      Win 10 (x64)
+; Changelog:      2023-01-04/2.0.0/just me   Initial release of the AHK v2 version
+;                 2024-01-08 TFW Heavily modified for my use in Switcher
+; ======================================================================================================================
+; CLASS LV_Colors
+; https://www.autohotkey.com/boards/viewtopic.php?f=83&t=93922
+; The class provides methods to set individual colors for rows and/or cells, to clear all colors, to prevent/allow
+; sorting and rezising of columns dynamically, and to deactivate/activate the notification handler for NM_CUSTOMDRAW
+; notifications (see below).
+;
+; A message handler for NM_CUSTOMDRAW notifications will be activated for the specified ListView whenever a new
+; instance is created. If you want to temporarily disable coloring call MyInstance.ShowColors(False). This must
+; be done also before you try to destroy the instance. To enable it again, call MyInstance.ShowColors().
+;
+; To avoid the loss of Gui events and messages the message handler is set 'critical'. To prevent 'freezing' of the
+; list-view or the whole GUI this script requires AHK v2.0.1+.
+/*
+   TODO
+   - Can derive this from Listview and add LV_Colors method to GUI
+   x Maybe get rid of the cells code and just use Row/Col?
+   x Desire to highlight the background of the control columns on hover, backup to show a tooltip
+     Need to be able to register col/text functions
+     Could also do this in the classGUIView file as well if not changing the colors
+     If doing colors then will need a 2D array with set/unset values to dynamicall change the colors
+     with the ability to remove once restored
+   - Tooltips could be implemented based on row/col where they are fed into this class
+     from the calling function then checked during the mouse move operation and shown
+     On movement of the mouse
+   https://www.autohotkey.com/boards/viewtopic.php?t=86124&start=20
+   https://github.com/TheArkive/GuiCtlExt_ahk2/blob/master/_GuiCtlExt.ahk
+*/
+
+; ======================================================================================================================
+Class LV_Colors {
+   ; ===================================================================================================================
+   ; __New()         Constructor - Create a new LV_Colors instance for the given ListView
+   ; Parameters:     HWND        -  ListView's HWND.
+   ;                 Optional ------------------------------------------------------------------------------------------
+   ;                 StaticMode  -  Static color assignment, i.e. the colors will be assigned permanently to the row
+   ;                                contents rather than to the row number.
+   ;                                Values:  True/False
+   ;                                Default: False
+   ;                 NoSort      -  Prevent sorting by click on a header item.
+   ;                                Values:  True/False
+   ;                                Default: False
+   ;                 NoSizing    -  Prevent resizing of columns.
+   ;                                Values:  True/False
+   ;                                Default: False
+   ; ===================================================================================================================
+   __New(LV, NoSort := true, NoSizing := true) {
+      If (LV.Type != "ListView")
+         Throw TypeError("LV_Colors requires a ListView control!", -1, LV.Type)
+      ; ----------------------------------------------------------------------------------------------------------------
+      ; Set LVS_EX_DOUBLEBUFFER (0x010000) style to avoid drawing issues.
+      LV.Opt("+LV0x010000")
+      ; Get the header control
+      Local Header := SendMessage(0x101F, 0, 0, LV) ; LVM_GETHEADER
+      ; Set other properties
+      this.LV            := LV
+      this.HWND          := LV.HWND
+      this.Header        := Header
+      this.SelColors     := false
+      this.RowCount      := LV.GetCount()
+      this.ColCount      := LV.GetCount("Col")
+      this.Rows          := Map()
+      this.Rows.Capacity := this.RowCount
+      this.Cols          := Map()
+      this.Cols.Capacity := this.ColCount
+      this.ColSet        := false
+      this.lastRow       := 1
+      this.lastCol       := 1
+      this.hotTrackCol   := 0
+      this.hotTrackColor := "0xFFFFFF"
+      this.hotTracking   := false
+      this.followMouse   := false
+      this.mouseDown     := false
+      this.NoSort(!!NoSort)
+      this.NoSizing(!!NoSizing)
+      ; Get the default colors
+      this.BkClr := SendMessage(0x1025, 0, 0, this.LV) ; LVM_GETTEXTBKCOLOR
+      this.TxClr := SendMessage(0x1023, 0, 0, this.LV) ; LVM_GETTEXTCOLOR
+
+      this.lastRow := 1
+      this.lastCol := 1
+      this._HookCustomDraw() ; install callbacks
+      
+      this.defFont :=0
+      this.btnFont := 0
+      this.selFont := 0
+      this.UpdateFont() ; default
+      ; NOTE - needed since the WM_LBUTTONUP event doesn't work while in a "click"
+      this.LV.OnEvent("Click", this._cbLbSelect.Bind(this))
+      ; TODO - How do we get the current font and its metrics to clone it at a different size?
+      ; GetObject into an HFONT structure
+      dlog("Create Listview Colors instance")
+   }
+   ; ===================================================================================================================
+   ; __Delete()      Destructor
+   ; ===================================================================================================================
+   __Delete() {
+      this._HookCustomDraw(false)
+      if (this.btnFont)
+         myGDI.DeleteObject(this.btnFont)
+      if (this.selFont)
+         myGDI.DeleteObject(this.selFont)
+   }
+   /**
+    * Create a new smaller font to be used when pressing down on a button for visual effect
+    * Call this right before you populate the listbox or change it's font
+    * @param sizeButtonFactor Depressed Button size % change
+    * @param sizeSelTextFactor Depressed Text Selection size % change
+    * @returns Nothing
+    */
+   UpdateFont(sizeButtonFactor:= 0.8, sizeSelTextFactor:=0.9) {
+      ; Get current font information
+      Static cFont             := stHFONT()
+      Static lastHeight        := 0      ; -32 by default (16 point)
+      Static FW_REGULAR        := 400    ; default
+      Static FW_BOLD           := 700
+      ;      lfHeight           = -MulDiv(PointSize, GetDeviceCaps(hDC, LOGPIXELSY), 72);
+      ; Get info on current listview font and populate HFONT
+      this.defFont := myGDI.getDefaultFont(this.HWND, cFont)
+      ; cFont.DumpProperties("Listview Font")
+      ; See if the font size changed from last time
+      if (cFont.cHeight != lastHeight) {
+         ; debug("Creating new font of height " cFont.cWeight)
+         lastHeight   := cFont.cHeight
+         this.btnFont := makeFont(this.btnFont, Round(lastHeight * sizeButtonFactor)  , FW_REGULAR)
+         this.selFont := makeFont(this.selFont, Round(lastHeight * sizeSelTextFactor) , FW_BOLD)
+         ; Make the font and clean out old ones
+         makeFont(font, height:=0, weight:=0) {
+            if (font)
+               myGDI.DeleteObject(font)
+            if height
+               cFont.cHeight := height ; size
+            if weight
+               cFont.cWeight := weight ; bold
+            return myGDI.CreateFontIndirect(cFont)
+         }
+      }
+   }
+   ; ===================================================================================================================
+   ; Return the last selected row
+   ; custom selection may disable active secltion/focus
+   ; so we rely on last mouse position
+   ; NOTE - this is kinda kludgy since selected/focus work differently if using mouse tracking
+   ; ===================================================================================================================
+   LasSelRow {
+      get {
+         if this.followMouse
+            return this.lastRow
+         else
+            return this.LV.GetNext(0)
+      }
+   }
+   ; ===================================================================================================================
+   ; SelectionColors() Sets background and/or text color for selected rows.
+   ; Parameters:     BkColor     -  Background color as RGB color integer (e.g. 0xFF0000 = red) or HTML color name.
+   ;                                Default: Empty -> default selected background color
+   ;                 TxColor     -  Text color as RGB color integer (e.g. 0xFF0000 = red) or HTML color name.
+   ;                                Default: Empty -> default selected text color
+   ; Return Value:   True on success, otherwise false.
+   ; ===================================================================================================================
+   SelectionColors(BkColor := "", TxColor := "") {
+      If !(this.HWND)
+         Return false
+      this.SelColors := false
+      If (BkColor = "") && (TxColor = "")
+         Return true
+
+      BkBGR := this.BGR(BkColor)
+      TxBGR := this.BGR(TxColor)
+      If (BkBGR = "") && (TxBGR = "")
+         Return false
+      ; Set the selection colors
+      this.SELB := BkBGR
+      this.SELT := TxBGR
+      this.SelColors := true
+      this._hookMouseIfNeeded()
+      Return true
+   }
+   ; ===================================================================================================================
+   ; ResetSize()   Resets the row and col counts, call after LV is updated.
+   ; Return Value: None.
+   ; NOTE - rely on row=1 for initial match of row selection if using manual selection highight
+   ; ===================================================================================================================
+   UpdateSize(usingMouse := false, defaultRow := 0, defaultCol := 1) {
+      ; Initial row to assume we are on
+      If (defaultRow) {
+         this.lastRow := defaultRow
+         this.lastCol := defaultCol
+      }
+      this.RowCount := this.LV.GetCount()
+      this.Colcount := this.LV.GetCount("Col")
+      this.followMouse := usingMouse
+      ; Get the height of a single row
+      rcalc := 10   ; remove header from calc
+      Res := SendMessage(LVM_APPROXIMATEVIEWRECT, rcalc - 1, 0, , this.hwnd)
+      ;-- Extract values (UShort) and assign to output variables
+      this.rowHeight := (Res >>> 16) / rcalc
+   }
+   ; ===================================================================================================================
+   ; Row()           Sets background and/or text color for the specified row.
+   ; Parameters:     Row         -  Row number
+   ;                 Optional ------------------------------------------------------------------------------------------
+   ;                 BkColor     -  Optional, Background color as RGB color integer (e.g. 0xFF0000 = red) or HTML color name.
+   ;                                Default: Empty -> default background color
+   ;                 TxColor     -  Optional, Text color as RGB color integer (e.g. 0xFF0000 = red) or HTML color name.
+   ;                                Default: Empty -> default text color
+   ;                 HtTxColor   -  Optinoal, Hot Track text color when mouse is over this cell (while in a selection)
+   ;                 HtBkColor   -  Optional, Hot Track background color when mouse is over this cell (while in a selection)
+   ; Return Value:   True on success, otherwise false.
+   ; ===================================================================================================================
+   /*
+      - auto enable hottrack OnMessage if needed
+   */
+   ColColor(Col, BkColor := "", TxColor := "", HtTxColor := "", HtBkColor := "") {
+      If !(this.HWND)
+         Return false
+      If (Col > this.ColCount or Col < 1)
+         Return false
+      If this.Cols.Has(Col)
+         this.Cols.Delete(Col)
+      If (BkColor = "") && (TxColor = "")
+         Return true
+      ; Have to force a default background color so hottracking can restore it
+      If NOT BkColor and HtBkColor
+         BkBGR := this.BkClr
+      Else
+         BkBGR := this.BGR(BkColor)
+      TxBGR := this.BGR(TxColor)
+      If (BkBGR = "") && (TxBGR = "")
+         Return false
+      ; default to default back color
+      HTxBGR := this.BGR(HtTxColor)
+      HBxBGR := this.BGR(HtBkColor)
+      ; Enable mouse cell hottracking if colors are specified for those
+      If (HTxBGR OR HBxBGR) {
+         ; debug("HotTrack=" HxBGR "Installed Mouse")
+         this._hookMouseIfNeeded()
+      }
+      ; These can be blank, in that case the row colors will be used
+      ; B - regular background color
+      ; T - regular text color
+      ; HB - Background when mouse is over cell
+      ; T - regular text color when mouse is over cell
+      ; PB - Background when mouse is pressed on a cell
+      ; TODO - don't hardcode the PB color delta, or maybe just use this.SELB (selection background)
+      ;      - Allow a push button background for each col if needed, add another parameter
+      lumVal := GetRGB(HBxBGR,&B,&G,&R) ; 
+      this.Cols[Col] := Map("B", BkBGR, "T", TxBGR, "HT", HTxBGR, "HB", HBxBGR, "PB", lumRGB(HBxBGR,lumVal > 128 ?-30:20)) ; this.SELB
+      this.ColSet := true  ; indicate we have some custom columns
+      Return true
+   }
+   ; ===================================================================================================================
+   ; Row()           Sets background and/or text color for the specified row.
+   ; Parameters:     Row         -  Row number
+   ;                 Optional ------------------------------------------------------------------------------------------
+   ;                 BkColor     -  Background color as RGB color integer (e.g. 0xFF0000 = red) or HTML color name.
+   ;                                Default: Empty -> default background color
+   ;                 TxColor     -  Text color as RGB color integer (e.g. 0xFF0000 = red) or HTML color name.
+   ;                                Default: Empty -> default text color
+   ; Return Value:   True on success, otherwise false.
+   ; ===================================================================================================================
+   RowColor(Row, BkColor := "", TxColor := "") {
+      If !(this.HWND)
+         Return false
+      If (Row > this.RowCount)
+         Return false
+      If this.Rows.Has(Row)
+         this.Rows.Delete(Row)
+      If (BkColor = "") && (TxColor = "")
+         Return true
+      BkBGR := this.BGR(BkColor)
+      TxBGR := this.BGR(TxColor)
+      If (BkBGR = "") && (TxBGR = "")
+         Return false
+      ; Colors := {B: (BkBGR != "") ? BkBGR : This.BkClr, T: (TxBGR != "") ? TxBGR : This.TxClr}
+      this.Rows[Row] := Map("B", BkBGR, "T", TxBGR)
+      Return true
+   }
+   ; ===================================================================================================================
+   ; NoSort()        Prevents/allows sorting by click on a header item for this ListView.
+   ; Parameters:     Apply       -  True/False
+   ; Return Value:   True on success, otherwise false.
+   ; ===================================================================================================================
+   NoSort(Apply := true) {
+      If !(this.HWND)
+         Return false
+      this.LV.Opt((Apply ? "+" : "-") . "NoSort")
+      Return true
+   }
+   ; ===================================================================================================================
+   ; NoSizing()      Prevents/allows resizing of columns for this ListView.
+   ; Parameters:     Apply       -  True/False
+   ; Return Value:   True on success, otherwise false.
+   ; ===================================================================================================================
+   NoSizing(Apply := true) {
+      If !(this.Header)
+         Return false
+      ControlSetStyle((Apply ? "+" : "-") . "0x0800", this.Header) ; HDS_NOSIZING = 0x0800
+      Return true
+   }
+
+
+   ; ===================================================================================================================
+   ;                                    C A L L   B A C K S
+   ; ===================================================================================================================
+   ; ===================================================================================================================
+   ; cbLbSelect      User made selection, turn of highlighting trigger
+   ;                 Allows for other hooks at user level
+   ;                 Will be called AFTER the user function is complete
+   _cbLbSelect(myObj, rNum, cNum := 0) {
+      this.mouseDown := false ; will reset color on next redraw
+   }
+   ; ===================================================================================================================
+   ; _HookCustomDraw()    Adds/removes a message handler for NM_CUSTOMDRAW notifications of this ListView.
+   ; Parameters:     Apply       -  True/False
+   ; Return Value:   Always True
+   ; ===================================================================================================================
+   _HookCustomDraw(Apply := true) {
+      Static NM_CUSTOMDRAW := -12
+      Static NM_HOVER := -13 ; https://learn.microsoft.com/en-us/windows/win32/learnwin32/other-mouse-operations
+      Static NM_RELEASEDCAPTURE := -16
+      If (Apply) && !this.HasOwnProp("OnNotifyFunc") {
+         this.OnNotifyFunc := this._NM_CUSTOMDRAW.Bind(this)
+         this.LV.OnNotify(NM_CUSTOMDRAW, this.OnNotifyFunc)
+      } Else If !(Apply) && this.HasOwnProp("OnNotifyFunc") {
+         this.LV.OnNotify(NM_CUSTOMDRAW, this.OnNotifyFunc, 0)
+         this.OnNotifyFunc := ""
+         this.DeleteProp("OnNotifyFunc")
+      }
+      Return true
+   }
+   ;----------------------------------------------------------------------
+   ; Check to see if hot tracking / mouse monitoring is enabled
+   ; define WM_MOUSEWHEEL                   0x020A
+   ;----------------------------------------------------------------------
+   _hookMouseIfNeeded() {
+      If ( NOT this.hotTracking) {
+         OnMessage(WM_LBUTTONDOWN, this._WM_MOUSEMOVE.Bind(this,,,,,1))
+         OnMessage(WM_MOUSEMOVE, this._WM_MOUSEMOVE.Bind(this,,,,,0))
+         OnMessage(WM_MOUSEWHEEL, this._WM_MOUSEWHEEL.Bind(this))
+         this.hotTracking := true
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Callback for mousewheel, move the mouse up/down a row contained in the listview
+   ;----------------------------------------------------------------------
+   _WM_MOUSEWHEEL(wParam, lParam, msg, hwnd) {
+      If (this.HWND = hWnd) {
+         ; potenital negative number in upper word, keep negative
+         movement := ((wParam >> 16 << 48 >> 48) > 0 ? -this.rowHeight : this.rowHeight)
+         if (this.lastRow > 1 AND movement < 0) OR (this.lastRow < this.RowCount AND movement > 0)
+            MouseMove(0,movement,0,"R")
+      }
+   }
+   ; ===================================================================================================================
+   ; MouseMove()      Callback to track row/col information on the listview
+   ; https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-mousemove
+   ;        Lexikos - return an integer to let AutoHotkey know it doesn't need to call any other handlers
+   ; ===================================================================================================================
+   _WM_MOUSEMOVE(wParam, lParam, msg, hWnd, mouseAction) {
+      Static stLVInfo := LVHITTESTINFO()
+      Critical 16
+      ; msg will be one of these above
+      If (this.HWND = hWnd) {
+         ; Coordinates relative to listview, so no translation
+         stLVInfo.pos.x := lParam & 0xFFFF
+         stLVInfo.pos.y := lParam >>> 16
+         ; Populate the row/col and other data for this position
+         ; Need a Pointer method for stLVInfo
+         If (SendMessage(LVM_SUBITEMHITTEST, 0, stLVInfo.Ptr, , hWnd) != -1) {
+            ; If no item was found on this position, the return value is empty
+            ; Save the corresponding subitem (column)
+            ; Flag := stLVInfo.flags ;; 0x2 for Icon and 0x4 for other text
+            LR := stLVInfo.Row + 1   ; iItem
+            LC := stLVInfo.Col + 1   ; iSubitem
+            ; wParam = 1 if left-mouse-button is down
+            ; mouseAction = 1 on the initial click, then if moves goes to 0 
+            ; If on a new cell  then force a redraw since selection didn't change
+            If (mouseAction) {
+               ; debug("Mouse Action=" mouseAction)
+               if (mouseAction = 1) {
+                  this.MouseDown := true
+               } else {
+                  ; Mouse Up doesn't seem to happen
+                  this.MouseDown := false
+               }
+               WinRedraw(hWnd)
+            } else If (LC != this.lastCol or LR != this.lastRow or wParam == MK_LBUTTON) {
+               ; Moved & wParam = 1 if the mouse was down, so cancel event like click would do
+               this.MouseDown := false
+               this.lastRow := LR
+               this.lastCol := LC
+               ; Force a notify callback since cell moved
+               WinRedraw(hWnd)
+            }
+         }
+      }
+   }
+
+   ; ===================================================================================================================
+   ; https://www.codeproject.com/Articles/2890/Using-ListView-control-under-Win32-API
+   ; https://www.codeproject.com/Articles/79/Neat-Stuff-to-Do-in-List-Controls-Using-Custom-Dra
+   ; https://learn.microsoft.com/en-us/windows/win32/controls/using-custom-draw
+   ; ===================================================================================================================
+   
+   /**
+    * 
+    * Internally used/called Methods
+    * Callback called once for EACH cell in listbox (colored or not)
+    * @param {Handle} Handle to listview object
+    * @param {NMLVCUSTOMDRAW*} Handle to custom draw listview structure
+    * @returns {number} Code for next loop CDRF_DODEFAULT=done,CDRF_NOTIFYITEMDRAW=do row, CDRF_NOTIFYSUBITEMDRAW=do column
+    */
+   _NM_CUSTOMDRAW(hLV, ptrNMLV) {
+      ; Static LData := stNMLVCUSTOMDRAW()
+      ; Reassign the structure address to map into the passed in structure
+      ; StructFromPtr is the modern way to do this, but classes must be nested
+      ; LData.Ptr := ptrNMLV
+      ; 2.1 Alpha 9 capability to return object pointing to passed in address
+      Ldata := StructFromPtr(stNMLVCUSTOMDRAW, ptrNMLV)
+      ; https://learn.microsoft.com/en-us/windows/win32/controls/cdrf-constants
+      ; Paint Stages
+      Static CDDS_PREPAINT         := 0x01
+      Static CDDS_ITEMPREPAINT     := 0x010001
+      Static CDDS_SUBITEMPREPAINT  := 0x030001
+      Static CDDS_SUBITEMPOSTPAINT := 0x030002
+      ; Row has Focus
+      Static CDIS_FOCUS            := 0x10
+      ; Return codes from each stage
+      Static CDRF_DODEFAULT         := 0x0
+      Static CDRF_SKIPDEFAULT       := 0x4
+      Static CDRF_NOTIFYITEMDRAW    := 0x20
+      Static CDRF_NOTIFYSUBITEMDRAW := 0x20
+      
+      If !(this.HWND) || (hLV.hWnd != this.HWND) {
+         Return CDRF_DODEFAULT
+      }
+      ; 0 based data returned for row/col
+      Row := Ldata.nmc.dwItemSpec + 1
+      Col := Ldata.iSubItem + 1
+      ; 
+      Switch LData.nmc.dwDrawStage {
+
+         Case CDDS_PREPAINT: ; Phase 1 , listview
+            Return this.RowCount ? CDRF_NOTIFYITEMDRAW : CDRF_DODEFAULT
+
+         Case CDDS_ITEMPREPAINT: ; phase 2; each row if CDRF_NOTIFYITEMDRAW
+            /* ItemState
+            Hex(529) -> 0x211 Selection Row
+            Hex(513) -> 0x201 Regular row
+            Hex(0)   -> not valid row
+            */
+            ; Callback For Rows, will always be Col 1
+            ; Get default for this row, and set if necessary
+            If (RowColor := this.Rows.Get(Row, "")) {
+               PutIfVal(RowColor["B"], RowColor["T"])
+            }
+            ; Completely bypass the hot tracking and just move mouse movement, that
+            ; way the selection is much faster with no lag
+
+            If ((ItemState := LData.nmc.uItemState) AND this.SelColors) {
+               If (this.followMouse) {
+                  ; Disable focus selection if it is enabled for this row using mouse
+                  If (ItemState & CDIS_FOCUS)
+                     LData.nmc.uItemState &= ~0x0011
+                  ; If this row is where the mouse is then highlight it accordingly,
+                  ; otherwise use the default listview background color
+                  If (this.lastRow = Row) {
+                     PutIfVal(this.SELB, this.SELT)
+                  } Else {
+                     PutIfVal(this.BkClr, "")
+                  }
+               } Else {
+                  If (ItemState & CDIS_FOCUS) {
+                     ; Only If focus row disable selection and replace
+                     ; Remove the CDIS_SELECTED (0x0001) and CDIS_FOCUS (0x0010) states from uItemState and set the colors manually.
+                     LData.nmc.uItemState &= ~0x0011
+                     PutIfVal(this.SELB, this.SELT)
+                  }
+               }
+               ; If column hot tracking notify for cells in this row to be redrawn
+               Return this.Colset ? CDRF_NOTIFYSUBITEMDRAW : CDRF_DODEFAULT
+            } else
+               Return CDRF_DODEFAULT
+
+            ; If more to do at cell level (each cell for this row)
+         Case CDDS_SUBITEMPREPAINT: ; phase 3, each cell in each row if CDRF_NOTIFYSUBITEMDRAW
+            ; Callback for Cells on a row, triggered from CDRF_NOTIFYSUBITEMDRAW above
+            ; ALL cells in a listview will be called-back when cell location changes
+            If (ColColor := this.Cols.Get(Col, "")) {
+               ; debug("--CDDS_SUBITEMPREPAINT Row=" Row ", Col=" this.lastCol)
+               ; Column override, either regular text or hot track text if mouse is over cell
+               If (this.hotTracking AND this.lastRow = Row AND this.lastCol = Col) {
+                  ; return CDRF_NEWFONT - https://learn.microsoft.com/en-us/windows/win32/controls/using-custom-draw 
+                  ; If mouse down, then make it look depressed with smaller font
+                  if (this.mouseDown) {
+                     ; Button with active backbround OR
+                     ; Non-button text, so adjust font differently
+                     if (ColColor["HB"]) {
+                        PutIfVal(ColColor["PB"], ColColor["HT"]) 
+                        myGDI.SelectObject(Ldata.nmc.hdc, this.btnFont )
+                     } else {
+                        myGDI.SelectObject(Ldata.nmc.hdc, this.selFont )
+                     }
+; DllCall("RoundRect", "PTR", Ldata.nmc.hdc, "Int", Ldata.rcText.Left, "Int", Ldata.rcText.Top, "Int", Ldata.rcText.Right, "Int", Ldata.rcText.Bottom, "Int", 10, "Int", 10)
+
+                  } else {
+                     ; Regular font and hot track color for non mouse-down
+                     PutIfVal(ColColor["HB"], ColColor["HT"]) 
+                     myGDI.SelectObject(Ldata.nmc.hdc, this.defFont)  ; impacting the reset of the cols in this row as well
+                  }
+                  ; myGDI.SelectObject(Ldata.nmc.hdc, (this.MouseDown AND ColColor["HB"]) ? this.btnFont : this.defFont)
+               } Else {
+                  ; Color set for this col, but not highlighted
+                  PutIfVal(ColColor["B"], ColColor["T"]) 
+                  myGDI.SelectObject(Ldata.nmc.hdc, this.defFont)  ; impacting the reset of the cols in this row as well
+               }
+            }
+            Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
+            ; CDRF_NOTIFYPOSTPAINT to trigger a follow-on stage if needed
+         Case CDDS_SUBITEMPOSTPAINT:
+            ; can draw stuff if we select in DC
+            ; debug(Ldata.rcText.Right)
+            ; TODO - maybe draw a border? Can we draw a rounded rectangle without wiping out the text?
+            ; https://www.reddit.com/r/AutoHotkey/comments/1h5rjdd/listview_with_some_borders_between_rows/
+            ; https://www.autohotkey.com/boards/viewtopic.php?style=10&f=82&t=135753
+            ; Could fill with nothing and use a rounded pen border, but filling it would probably overrite the text
+            ; https://github.com/XMCQCX/WinExeCommander/blob/main/Lib/LV_GridColor.ahk
+
+            Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
+         Default:
+            ; debug(hex(DrawStage) ", Default Row=" Row ", Col=" Col)
+            Return CDRF_DODEFAULT
+      }
+      /*****
+       * Closure to stuff a value into fg/bg color for this cell if it exists
+       * @param bgVal blank or new background color in BGR format
+       * @param fgVal blank or new foreground color in BGR format
+       * @returns Nothing
+       */
+      PutIfVal(bgVal, fgVal) {
+         ; TODO - rounded rectangle around text
+         ; https://claude.ai/chat/f3aee8a3-227d-430f-831a-7fe2a81f6877
+         ; Rather than set the clrTextBk background color, use GDI+ to draw a rounded rectangle filled with the color
+         If bgVal != "" {
+            If (0) {
+               Try {
+                  rr      := stRECT()
+                  rr.top  := Col
+                  rr.left := 0
+                  Res     := SendMessage(LVM_GETSUBITEMRECT, Row, rr, , this.hwnd)
+                  If (rr.right > 0) {
+                     ; debug(Res " " rr.top " " rr.left " " rr.right " " rr.bottom)
+                     region := myGDI.CreateRoundRectRgn(rr.left, rr.top, rr.right + 1, rr.bottom + 1, 10, 10)
+                     myGDI.SelectClipRgn(Ldata.nmc.hdc, region)
+                     brush := myGDI.CreateSolidBrush(0xFFFF0000)
+                     myGDI.FillRect(Ldata.nmc.hdc, rr, brush)
+                     ; TODO - have to draw the text and return skip default
+                     ;   DrawText(pLVCD->nmcd.hdc, szText, -1, &rcItem, DT_VCENTER | DT_SINGLELINE);
+                     myGDI.SelectClipRgn(Ldata.nmc.hdc, 0)
+                     myGDI.DeleteObject(region)
+                     myGDI.DeleteObject(brush)
+                     ; Return CDRF_SKIPDEFAULT
+                     ; 
+                  }
+               } Catch As err {
+                  elog(err)
+               }
+            }
+            Ldata.clrTextBk := bgVal
+         }
+         If fgVal != ""
+            Ldata.clrText := fgVal
+         Return
+      }
+   }
+   /**
+    * Returns the Blue-Green Red number for some RGB code
+    * @param Color in RGB format
+    * @param Default if no color found, can be blank
+    */
+   BGR(Color, Default := "") { ; converts colors to BGR
+      ; HTML Colors (BGR)
+      Static HTML := { AQUA: 0xFFFF00, BLACK: 0x000000, BLUE: 0xFF0000, FUCHSIA: 0xFF00FF, GRAY: 0x808080, GREEN: 0x008000
+         , LIME: 0x00FF00, MAROON: 0x000080, NAVY: 0x800000, OLIVE: 0x008080, PURPLE: 0x800080, RED: 0x0000FF
+         , SILVER: 0xC0C0C0, TEAL: 0x808000, WHITE: 0xFFFFFF, YELLOW: 0x00FFFF }
+      Switch Type(Color) {
+         Case "Integer":
+            Return ((Color >> 16) & 0xFF) | (Color & 0x00FF00) | ((Color & 0xFF) << 16)
+         Case "String":
+            If (HTML.HasOwnProp(Color))
+               Return HTML.%Color%
+            Else if Color {
+               Color := Integer("0x" SubStr(Color, -6))
+               Return ((Color >> 16) & 0xFF) | (Color & 0x00FF00) | ((Color & 0xFF) << 16)
+            } else
+               Return ""
+      }
+   }
+   ;----------------------------------------------------------------------
+   ; Lock the width of the listview column
+   ; Do this is stages
+   ; 1.0 Save width after initial posting
+   ; 2.0 Set the width to prior saved value after re-populating
+   ;----------------------------------------------------------------------
+   lockTitleWidth(col, stage) {
+      Static LVM_GETCOLUMNWIDTH := 0x101D
+      Static LVM_SETCOLUMNWIDTH := 0x101E
+      Static lastWidth := Map()
+      Switch stage {
+         Case 1:
+            Loop this.LV.GetCount("Col")
+               lastWidth[A_Index] := SendMessage(LVM_GETCOLUMNWIDTH, A_Index-1, 0, this.hWnd)
+         Case 2:
+            Loop this.LV.GetCount("Col")
+               if (lastWidth[A_Index] > 0)   ; allow hidden columns to freely open up
+                  SendMessage(LVM_SETCOLUMNWIDTH, A_Index-1, lastWidth[A_Index], this.hWnd)
+         Default:
+      }
+   }
+
+}
+; TODO - Put all my structure classs in a common file
+; class stRECT {
+;    Left : i32
+;    Top : i32
+;    Right : i32
+;    Bottom : i32
+; }
+
+
+dlog("Include File Loaded")

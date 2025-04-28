@@ -1,0 +1,323 @@
+;----------------------------------------------------------------------------
+; Drag and resize active window around without using the title bar/borders
+;
+; Adapted for v2 from https://autohotkey.com/boards/viewtopic.php?f=5&t=48520&p=216844#p216844
+; https://www.autohotkey.com/boards/viewtopic.php?f=6&t=57703
+
+; TO use, assign to modified mouse button like below
+; #LButton::WindowMouseDragResize("LButton")
+; BUG - not working if primary monitor is on right (negative pixels on left)
+;--------------------------------------------------------------------------------------------
+#Include dllFactory.ahk2            ; Common files, mostly dllcall window related
+#Include monitors.ahk2              ; Class for handling multiple monitors
+
+WindowMouseDragResize(button) {
+   Static SIZEALL             := 0x7f86
+   Static SIZENESW            := 0x7f83
+   Static SIZENS              := 0x7f85
+   Static SIZENWSE            := 0x7f82
+   Static SIZEWE              := 0x7f84
+   Static L_TimeSinceLastMove := A_TickCount
+   Static defFlag             := 0x0004 | 0x0010 | 0x0200 | 0x0400	; SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING
+   Static Moveflag            := defFlag | 0x0001 | 0x0008	; SWP_NOSIZE | SWP_NOREDRAW
+   Static Resizeflag          := defFlag | 0x0040	; SWP_SHOWWINDOW
+   Static resizeThreshold     := 0.33	; % from edge to center is resizing
+
+   moves := 0
+   CoordMode("Mouse", "Screen")
+   MouseGetPos(&mx0, &my0, &hWnd)
+   ; Bring window to top
+   If (!WinActive(hWnd)) {
+      WinActivate(hWnd)
+   }
+   WinGetPos(&wx, &wy, &ww, &wh, hWnd)
+   window_minmax := WinGetMinMax(hWnd)
+; debug("Style=" hex(WinGetStyle(hWnd)) ", ExStyle=" hex(WinGetExStyle(hWnd)))
+   monInfo.activeMonDetails(1)
+   mInfo := monInfo.getMonitorInfo(hWnd)
+   
+   ; Adjust so invisible border/shadow are excluded
+   borderOffset := WinGetBorderOffset(hWnd)
+   ; bo := borderOffset.Left
+   mInfo.Left -= borderOffset.L
+   mInfo.Width += borderOffset.L + borderOffset.R
+   mInfo.Height += borderOffset.T + borderOffset.B
+   ; menu-resize based solution -
+   ; https://autohotkey.com/boards/viewtopic.php?f=5&t=48520&p=216844#p216844
+   ; WinMenuSelectItem, ahk_id %window_id%,,0&, Size
+   ; return
+   ; if Double click then max/restore window instead
+   If (A_ThisHotkey == A_PriorHotkey and A_TimeSincePriorHotkey < 300) {
+      If (window_minmax = 0) {
+         ; windows was normal resizeable
+         WinMaximize(hWnd)
+      } Else {
+         ; windows was maximized or minimized
+         WinRestore(hWnd)
+      }
+   } Else If (window_minmax = 0) {
+      ; Setup flags for efficient moving/resizing
+      flag := defFlag
+      SetWinDelay(0)
+      ; Find center
+      wxCenter := wx + (ww / 2), wyCenter := wy + (wh / 2)
+      ; determine corner drag if mouse is this many percent points away from the center
+      xNoEdgeThreshold := Round(ww * (1 - resizeThreshold) / 1.5, 0)
+      yNoEdgeThreshold := Round(wh * (1 - resizeThreshold) / 1.5, 0)
+      ; establish drag corner depending on which quadrant the mouse is
+      ; Edge positions of the inner rectangle
+      wxLeftEdge := wxCenter - xNoEdgeThreshold
+      wxRightEdge := wxCenter + xNoEdgeThreshold
+      wyTopEdge := wyCenter - yNoEdgeThreshold
+      wyBottomEdge := wyCenter + yNoEdgeThreshold
+
+      ; Determine if mouse is inside or outside inner rectangle
+      xEdge := mx0 < wxLeftEdge ? -1 : mx0 > wxRightEdge ? 1 : 0
+      yEdge := my0 < wyTopEdge ? -1 : my0 > wyBottomEdge ? 1 : 0
+      ; Based on inside/outside change the cursor for action
+      If (xEdge * yEdge > 0) {
+         ; upper right or lower left
+         SetSystemCursor(SIZENWSE)
+      } Else If (xEdge * yEdge < 0) {
+         ; other two corners
+         SetSystemCursor(SIZENESW)
+      } Else If (xEdge == 0 && yEdge == 0) {
+         ; inside (move)
+         SetSystemCursor(SIZEALL)
+      } Else {
+         ; Otherwise must be on border
+         SetSystemCursor(xEdge == 0 ? SIZENS : SIZEWE)
+      }
+      ;##########################
+      ; Loop while button is down
+      ;##########################
+      While (GetKeyState(button, "P")) {
+         MouseGetPos(&mx, &my)
+         If (mx = mx0 && my = my0) {
+            ; don't tie up the CPU if no movement recently
+            If (A_TickCount > (L_TimeSinceLastMove + 100)) {
+               Sleep(50)
+            }
+            Continue
+         }
+         If (xEdge = 0 && yEdge = 0) {
+            ; move
+            isResize := false
+            flag := Moveflag
+            wx += mx - mx0
+            wy += my - my0
+         } Else {
+            ; resize
+            isResize := true
+            flag := Resizeflag
+            deltaX := mx - mx0, deltaY := my - my0
+            pt := wy, pb := wy + wh, pl := wy, pr := wy + ww
+            ; resize x
+            If (xEdge > 0) {
+               ; right
+               pl := ww, ww += deltaX, pr := ww
+            } Else If (xEdge < 0) {
+               ; left
+               pr := wx, wx += deltaX, pr := wx, ww -= deltaX
+            }
+            ; resize y
+            If (yEdge > 0) {
+               ;bottom
+               pt := wh, wh += deltaY, pb := wh
+            } Else If (yEdge < 0) {
+               ; top
+               pb := wy, wy += deltaY, pt := wy, wh -= deltaY
+            }
+         }
+         mx0 := mx, my0 := my
+         L_TimeSinceLastMove := A_TickCount
+         ; Similar to internal winmove, maybe a little better on resize
+         ;WinMove(wx, wy, ww, wh, window_id)
+         ; NOTE - only limit if far left monitor (0,0)
+         SetWindowPos(hWnd, wx, wy, ww, wh, flag) 
+         ; SetWindowPos(hWnd, Max(wx, 0), Max(wy, 0), Min(ww, mInfo.Width), Min(wh, mInfo.Height), flag)
+         ; SetWindowPos(hWnd, Max(wx, mInfo.Left), Max(wy, mInfo.Top), Min(ww, mInfo.Width), Min(wh, mInfo.Height), flag)
+         ; debug("win=" hWnd ", wx=" wx ", wy=" wy ", ww=" ww ", wh=" wh ", mLeft=" mInfo.Left)
+
+         If (isResize) {
+            ; Force an immediate redraw
+            UpdateWindow(hWnd)	; immediate
+         }
+         moves++
+      }
+      SetSystemCursor()
+      SetWinDelay(0)
+   }
+   Return moves
+}
+;----------------------------------------------------------------------------
+; Clamp Monitor to right or left of screen and max vertical height
+; how = -1 ; restore
+; how = 0  ; max height auto side
+; how = 1  ; left side
+; how = 2  ; right side
+; how = 3  ; top half
+; how = 4  ; bottom half
+;----------------------------------------------------------------------------
+clampMonitor(how) {
+   window_id := WinActive("A")
+   If (window_id)
+      clampWindow(window_id, how)
+}
+;----------------------------------------------------------------------------
+; Moving/sizing is all done in absolute pixels
+;----------------------------------------------------------------------------
+clampWindow(hWnd, how) {
+   Static WinPos := Map()
+   ThisPos := Map()
+   monInfo.activeMonDetails(1)
+
+   If (how >= 0 and WinGetMinMax(hWnd) = -1) {
+      WinRestore(hWnd)
+      Return
+   }
+   hasDPI := (GetWindowDPIAwareness(hWnd) >= 1)
+   mInfo := monInfo.getMonitorInfo(hWnd)
+   ;----------------------------------------------------------------------------
+   ; NOTE - If we are dealing with dpi process, then we account for extra border
+   ; Both here in measuring and later in positioning (they cancel)
+   ;----------------------------------------------------------------------------
+   hasDPI := 1
+   If hasDPI {
+      WinGetPosEx(&X, &Y, &wnWidth, &wnHeight, hWnd)
+   } Else {
+      WinGetPos(&X, &Y, &wnWidth, &wnHeight, hWnd)
+   }
+   ; defaults
+   winTop := mInfo.Top
+   winBottom := mInfo.Bottom
+   winLeft := mInfo.Left
+
+   ; Save current window state
+   myState := getMyState()
+
+   If (myState == "N" OR ( not WinPos.has(hWnd) And myState ~= "N|R|L|T|B")) {
+      OutputDebug("Saving position for window " hWnd)
+      WinPos[hWnd] := GetWindowPlacementBuf(hWnd)
+   }
+
+   ; debug(how ", BO=" bo ", Win X=" X ", Win Y=" Y ", wnHeight=" wnHeight ", wnWidth=" wnWidth " - minfo.Left=" mInfo.Left ", minfo.Right=" mInfo.Right ", minfo.Bottom=" mInfo.Bottom)
+   ;OutputDebug("how=" how ", Winfo.Left=" winfo.Left  ", WInfo.Right=" winfo.Right ", Width=" Width ", Winfo.Top=" winfo.Top ", winfo.Bottom=" winfo.Bottom)
+   if (how == 0) {
+      ; Indicates an upwheel or ctrl-alt-up
+      If (myState ~= "L|R|T|B") {
+         WinMaximize(hWnd)
+         return
+      } else {
+         ; Compute left or right side
+         how := (X + wnWidth / 2) < (mInfo.Left + mInfo.Width / 2) ? 1 : 2
+      }
+   }
+   ; Compute new location information
+   ; determine if left or right side
+   ; winLeft, winTop, wnWidth, winBottom
+   Switch how {
+      Case 1:
+         ; Clamp left side
+         If (myState ~= "T|B") {
+            wnWidth := mInfo.Width / 2
+         }
+         winLeft := mInfo.Left
+      Case 2:
+         ; right side
+         If (myState ~= "T|B") {
+            wnWidth := mInfo.Width / 2
+         }
+         winLeft := mInfo.Right - wnWidth
+      Case 3:
+         ; top half - full width
+         wnWidth := mInfo.Width
+         winBottom := mInfo.Top + (mInfo.Bottom - mInfo.Top) / 2
+      Case 4:
+         ; bottom half - full width
+         winTop := mInfo.Top + (mInfo.Bottom - mInfo.Top) / 2
+         wnWidth := mInfo.Width
+         winBottom := (mInfo.Bottom - mInfo.Top) / 2
+      Case -1:
+         ; Restore Normal if possible
+         ; Goal, if clamped then restore to "normal", if "normal" then minimize
+         ; Wheel down or Ctrl Alt Down will trigger
+         ; NOTE - WinRestore only works if I didn't fiddle with clamping
+         If (myState == "X") {
+            WinRestore(hWnd)
+         } Else If (WinPos.Has(hWnd)) {
+            If (myState == "N") {
+               ; Already in normal position (not clamped), then minimize
+               WinMinimize(hWnd)
+               OutputDebug("No need to restore, minimizing window " hWnd)
+            } Else {
+               ; Not in normal, then restore normal
+               RestoreWindowPlacement(hWnd, WinPos[hWnd])
+               OutputDebug("Restoring initial position for window " hWnd)
+               WinPos.Delete(hWnd)
+            }
+         } Else {
+            WinMinimize(hWnd)
+            OutputDebug("Nothing to restore, minimizing window " hWnd)
+         }
+         Return
+      Default:
+   }
+   ;debug("How:" how ", WinMove: X:" winLeft ", Y:" winTop ", Width:" Width ", Height:" Height)
+   /*
+      If the process is not hidpi aware, then setting the position across monitors will not work
+      It only works to span monitors if the process is hidpi aware
+      spanning is needed since the invisible resize border needs to be compensated for and
+      will put part of a window on another window.
+   */
+   If (hasDPI) {
+      ; debug("Process id DPI aware")
+      ; NOTE - Takes into account hidden border sizes to offset placement
+      WinMoveEx(winLeft, winTop, wnWidth, winBottom, hWnd)
+      ; WinMove(winLeft, winTop, wnWidth, winBottom, hWnd)
+   } Else {
+      ; Ex is buggy on multiple monitors (esp if different DPIs)
+      WinMove(winLeft, winTop, wnWidth, winBottom, hWnd)
+      ;SetWindowPosNoFlicker(window_id, winLeft, winfo.Top, Width, winfo.Bottom, 0)
+   }
+   ; make sure it is active
+   If (!WinActive(hWnd)) {
+      WinActivate(hWnd)
+   }
+   ;----------------------------------------------------------------------
+   ; Return the window state
+   ; NMXTLBR are the potential values
+   ; Use if (Var ~= "N|M|X") type logic
+   ;----------------------------------------------------------------------
+   getMyState() {
+      state := WinGetMinMax(hWnd)
+      Switch state {
+         Case 0: ; normal
+            If (inAPixel(mInfo.Top, Y) AND inAPixel(mInfo.Bottom, wnHeight)) {
+               ; debug("Top/Bottom Match")
+               If inAPixel(mInfo.Left, X)
+                  state := "L" ; clamp left
+               Else If inAPixel(mInfo.Right, X + wnWidth)
+                  state := "R" ; clamp right
+            } Else If (inAPixel(X, mInfo.Left) AND inAPixel(wnWidth, mInfo.Width)) {
+               If inAPixel(mInfo.top, Y)
+                  state := "T" ; clamp top
+               Else If inAPixel(mInfo.Bottom, Y + wnHeight)
+                  state := "B" ; clamp bottom
+            } Else {
+               state := "N"
+            }
+         Case -1: ; minimized
+            state := "M"
+         Case 1: ; maximized
+            state := "X"
+         default:
+      }
+      ; debug("State=" state ", Win X=" X ", Win Y=" Y ", wnHeight=" wnHeight ", wnWidth=" wnWidth " - minfo.Left=" mInfo.Left ", minfo.Right=" mInfo.Right ", minfo.Bottom=" mInfo.Bottom)
+      Return state
+
+      inAPixel(x, y) => (Abs(x - y) <= 1)
+
+   }
+}
+dlog("Include File Loaded")

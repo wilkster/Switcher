@@ -14,10 +14,10 @@ desktop and monitor locations are shown as well. Each of the icons can be clicke
 |Hotkey|Description|
 |---|---|
 |Alt-Tab|Activate Switcher, Alt-Tab and Shift-Alt-Tab works just like built in functions|
-|Scroll-Wheel-Right|Switch to prior window of same application (if Mouse supports)|
-|Scroll-Wheel-Left|Switch to prior window of different application (if Mouse supports)|
-|Control-Scroll-Wheel-Right|Go to next desktop with wrap (similar to Contrl-Win Right)|
-|Control-Scroll-Wheel-Left|Go to prior desktop with wrap (similar to Contrl-Win Left)|
+|ScrollWheel_Right|Switch to prior window of same application (if Mouse supports)<br>If over tray area move to next desktop|
+|ScrollWheel_Left|Switch to prior window of different application (if Mouse supports)<br>If over tray area move to prior desktop|
+|Control-ScrollWheel_Right|Go to next desktop with wrap (similar to Control-Win Right)|
+|Control-ScrollWheel_Left|Go to prior desktop with wrap (similar to Control-Win Left)|
 |XButton 1|Activate Switcher with list of windows of current application (if mouse supports)|
 |XButton 2|Activate Switcher with list of all top level windows (if mouse supports)|
 |Click Tray Icon|Switch to next desktop in rotation|

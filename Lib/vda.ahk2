@@ -26,7 +26,7 @@ class vda {
          ; I think Win 10 recent builds can also use the vda11 version (along with win 11), not 100% though
          os := StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
          for subPath in ["\" A_ComputerName, ""] {
-            path := ".\vda" os subPath "\VirtualDesktopAccessor.dll"
+            path := A_ScriptDir . "\vda" . os . subPath . "\VirtualDesktopAccessor.dll"
             if (fileExist(path)) {
                this.hVDA := DllCall("LoadLibrary", "Str", path, "Ptr")
                dLog("Loaded vda Library " path)

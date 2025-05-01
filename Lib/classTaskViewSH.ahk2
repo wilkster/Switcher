@@ -556,7 +556,7 @@ Class clsTaskView {
                      /*
                      NOTE - UWP Shortcomings
                      - UWPAppName always works and returns the short display name also knows the AppID internally
-                       however I can't get the full process name path or the path the manifest
+                       however I can't get the full process name path or the path the manifest (see GetUWPRealPath)
                      - So I resort to trying to get the path/pname from the executable of the child process
                        however, if it is minimized or on a different desktop there is no visible child process
                      - Really want a single function that using the AppID or FullName (I can get either one)

@@ -9,8 +9,9 @@
 ; Changelog:      2023-01-04/2.0.0/just me   Initial release of the AHK v2 version
 ;                 2024-01-08 TFW Heavily modified for my use in Switcher
 ; ======================================================================================================================
-; CLASS LV_Colors
+; CLASS LV_Colors - derived from just me implementation
 ; https://www.autohotkey.com/boards/viewtopic.php?f=83&t=93922
+;
 ; The class provides methods to set individual colors for rows and/or cells, to clear all colors, to prevent/allow
 ; sorting and rezising of columns dynamically, and to deactivate/activate the notification handler for NM_CUSTOMDRAW
 ; notifications (see below).
@@ -21,22 +22,6 @@
 ;
 ; To avoid the loss of Gui events and messages the message handler is set 'critical'. To prevent 'freezing' of the
 ; list-view or the whole GUI this script requires AHK v2.0.1+.
-/*
-   TODO
-   - Can derive this from Listview and add LV_Colors method to GUI
-   x Maybe get rid of the cells code and just use Row/Col?
-   x Desire to highlight the background of the control columns on hover, backup to show a tooltip
-     Need to be able to register col/text functions
-     Could also do this in the classGUIView file as well if not changing the colors
-     If doing colors then will need a 2D array with set/unset values to dynamicall change the colors
-     with the ability to remove once restored
-   - Tooltips could be implemented based on row/col where they are fed into this class
-     from the calling function then checked during the mouse move operation and shown
-     On movement of the mouse
-   https://www.autohotkey.com/boards/viewtopic.php?t=86124&start=20
-   https://github.com/TheArkive/GuiCtlExt_ahk2/blob/master/_GuiCtlExt.ahk
-*/
-
 ; ======================================================================================================================
 Class LV_Colors {
    ; ===================================================================================================================
@@ -97,8 +82,6 @@ Class LV_Colors {
       this.UpdateFont() ; default
       ; NOTE - needed since the WM_LBUTTONUP event doesn't work while in a "click"
       this.LV.OnEvent("Click", this._cbLbSelect.Bind(this))
-      ; TODO - How do we get the current font and its metrics to clone it at a different size?
-      ; GetObject into an HFONT structure
       dlog("Create Listview Colors instance")
    }
    ; ===================================================================================================================
@@ -252,10 +235,9 @@ Class LV_Colors {
       ; HB - Background when mouse is over cell
       ; T - regular text color when mouse is over cell
       ; PB - Background when mouse is pressed on a cell
-      ; TODO - don't hardcode the PB color delta, or maybe just use this.SELB (selection background)
-      ;      - Allow a push button background for each col if needed, add another parameter
-      lumVal := GetRGB(HBxBGR,&B,&G,&R) ; 
-      this.Cols[Col] := Map("B", BkBGR, "T", TxBGR, "HT", HTxBGR, "HB", HBxBGR, "PB", lumRGB(HBxBGR,lumVal > 128 ?-30:20)) ; this.SELB
+      ; Slightly dim/brighten the cell background when pressed
+      lumVal := GetRGB(HBxBGR, &B, &G, &R) ;
+      this.Cols[Col] := Map("B", BkBGR, "T", TxBGR, "HT", HTxBGR, "HB", HBxBGR, "PB", lumRGB(HBxBGR, lumVal > 128 ? -30 : 20)) ; this.SELB
       this.ColSet := true  ; indicate we have some custom columns
       Return true
    }
@@ -531,7 +513,7 @@ Class LV_Colors {
          Case CDDS_SUBITEMPOSTPAINT:
             ; can draw stuff if we select in DC
             ; debug(Ldata.rcText.Right)
-            ; TODO - maybe draw a border? Can we draw a rounded rectangle without wiping out the text?
+            ; IDEA - maybe draw a border? Can we draw a rounded rectangle without wiping out the text?
             ; https://www.reddit.com/r/AutoHotkey/comments/1h5rjdd/listview_with_some_borders_between_rows/
             ; https://www.autohotkey.com/boards/viewtopic.php?style=10&f=82&t=135753
             ; Could fill with nothing and use a rounded pen border, but filling it would probably overrite the text
@@ -549,7 +531,7 @@ Class LV_Colors {
        * @returns Nothing
        */
       PutIfVal(bgVal, fgVal) {
-         ; TODO - rounded rectangle around text
+         ; IDEA - rounded rectangle around text
          ; https://claude.ai/chat/f3aee8a3-227d-430f-831a-7fe2a81f6877
          ; Rather than set the clrTextBk background color, use GDI+ to draw a rounded rectangle filled with the color
          If bgVal != "" {
@@ -560,18 +542,13 @@ Class LV_Colors {
                   rr.left := 0
                   Res     := SendMessage(LVM_GETSUBITEMRECT, Row, rr, , this.hwnd)
                   If (rr.right > 0) {
-                     ; debug(Res " " rr.top " " rr.left " " rr.right " " rr.bottom)
                      region := myGDI.CreateRoundRectRgn(rr.left, rr.top, rr.right + 1, rr.bottom + 1, 10, 10)
                      myGDI.SelectClipRgn(Ldata.nmc.hdc, region)
                      brush := myGDI.CreateSolidBrush(0xFFFF0000)
                      myGDI.FillRect(Ldata.nmc.hdc, rr, brush)
-                     ; TODO - have to draw the text and return skip default
-                     ;   DrawText(pLVCD->nmcd.hdc, szText, -1, &rcItem, DT_VCENTER | DT_SINGLELINE);
                      myGDI.SelectClipRgn(Ldata.nmc.hdc, 0)
                      myGDI.DeleteObject(region)
                      myGDI.DeleteObject(brush)
-                     ; Return CDRF_SKIPDEFAULT
-                     ; 
                   }
                } Catch As err {
                   elog(err)
@@ -630,13 +607,4 @@ Class LV_Colors {
    }
 
 }
-; TODO - Put all my structure classs in a common file
-; class stRECT {
-;    Left : i32
-;    Top : i32
-;    Right : i32
-;    Bottom : i32
-; }
-
-
 dlog("Include File Loaded")

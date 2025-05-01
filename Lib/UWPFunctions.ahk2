@@ -3,7 +3,7 @@
 ;----------------------------------------------------------------------
 ; Best effort to return a process path for a child window
 ; Check if it is a UWP app first
-; Would only be called if now prior icon file was available for a UWP app
+; Would only be called if no prior icon file was available for a UWP app
 ; TODO - Need to find a way to find the real process name for cloaked or minimized apps
 ; - Trying to use the Package or Property System with no luck so far
 ; - I CAN get the display name for either case, just not the process name
@@ -98,7 +98,7 @@ UWPPathName(hWnd, to := 1000) {
 
 ;----------------------------------------------------------------------
 ; Return the Common Name for some app
-; NOTE - Can find the associated child app within an application frame hose
+; NOTE - Can find the associated child app within an application frame host
 ; even if the child app is suspended or off desktop
 ; Uses a cache of the app names, I store Icons by their app names
 ; Default to window title if we can't get an app name
@@ -158,6 +158,7 @@ GetPackageFullName(ProcessId)    {
 ;----------------------------------------------------------------------
 ; This is a kludgy way to copy over icons from the UWP folders
 ; if we don't have them already
+; Square44x44Logo is typically what we want
 ;----------------------------------------------------------------------
 saveUWPLogo(dispName, exeTargetPath, logoTargetLoc) {
 
@@ -255,7 +256,7 @@ saveUWPLogo(dispName, exeTargetPath, logoTargetLoc) {
    Return ""
    ;----------------------------------------------------------------------
    ; Find the largest image that fits the path, better for resizing
-   ; TODO : Should we target specific DPI versions?
+   ; IDEA : Should we target specific DPI versions?
    ;----------------------------------------------------------------------
    getBiggestLogo(patt) {
       LogoName := ""

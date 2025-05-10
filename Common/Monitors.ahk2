@@ -557,6 +557,9 @@ Class dxva2 {
       Static ERROR_GEN_FAILURE := 0x1f
       Static VCP_INPUT_SELECT := 0x60
       ; 0xC0262582 was error on orka
+      ; currentValue
+      ; Values like 1 or 2 often indicate internal displays
+      ; Values like 3 or 4 often indicate external displays
       If (res := DllCall("dxva2\GetVCPFeatureAndVCPFeatureReply"
          , "Ptr", pHandle
          , "char", VCP_INPUT_SELECT
@@ -565,10 +568,10 @@ Class dxva2 {
          , "Uint*", &maximumValue := 0)) {
             Return currentValue
       } Else {
-         ; debug("Error=" hex(A_LastError))
+         ; debug("Error=" hex(A_LastError) " " currentValue)
          ; disconnected monitor OR laptop will fail, so look at the failure type
          Switch A_LastError {
-            Case 0xC0262582, ERROR_GEN_FAILURE:
+            Case 0xC0262582, 0xC0262589, ERROR_GEN_FAILURE:
                Return -1
             Default:
                Return 0

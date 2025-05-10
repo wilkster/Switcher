@@ -20,27 +20,48 @@
 */
 Class UWP {
    Static UWPIcons := A_ScriptDir . "\Icons\UWPIcons"
-   Static nameMap := Map(), manMap := Map(), IDMap := Map()
+   Static AppMap := Map(), UPWFileMap := Map()
    ; Cache any needed UWP icons on startup
    Static __New() {
       apps := 0
+      if (NOT DirExist(this.UWPIcons))
+         DirCreate(this.UWPIcons) 
+      dLog("Checking bitmaps from shell:AppsFolder")
       For app in ComObject('Shell.Application').NameSpace('shell:AppsFolder').Items {
          ; Look for UWP Store Apps only
          If (app.Path ~= "!") {
             ; Store the AppUserModelId by the application display (icon) name
-            AppID                  := StrSplit(app.Path, "!")[2] ; -> This can be used to find the Application Id                       = "xxx" match in manifest like we do for the executable now
-            appManifest            := app.ExtendedProperty("System.AppUserModel.PackageInstallPath") . "\AppxManifest.xml" ; this works, get path to manifest file + AppxManifest.xml
-            this.nameMap[app.Path] := app.Name ;
-            this.manMap[app.Path]  := appManifest
-            this.IDMap[app.Path]   := AppID
+            AppID               := StrSplit(app.Path, "!")[2] ; -> This can be used to find the Application Id                       = "xxx" match in manifest like we do for the executable now
+            appManifest         := app.ExtendedProperty("System.AppUserModel.PackageInstallPath") . "\AppxManifest.xml" ; this works, get path to manifest file + AppxManifest.xml
+            AUMID               := app.Path
+            this.AppMap[AUMID]  := {Name : app.Name, Manifest : appManifest, ID : AppID}
+            ; , FullName : app.ExtendedProperty("System.AppUserModel.PackageFullName")
             ; debug(app.Name "->" appManifest)
-            ; packageFullName := app.ExtendedProperty("System.AppUserModel.PackageFullName") ; this works
             ; Can use two below to find an icon in the manifest
             this.__cacheUWPLogo(app.Path)
             apps++
          }
       }
-      debug("Checked a total of " apps " UWP icons from shell:AppsFolder")
+      ;----------------------------------------------------------------------
+      ; Cache the icon file locations now
+      ;----------------------------------------------------------------------
+      dLog("Checked a total of " apps " UWP icons from shell:AppsFolder")
+      Loop Files this.UWPIcons . "\*.*" {
+         If (A_LoopFileExt ~= "i)ico|png") {
+            SplitPath(A_LoopFileFullPath, , , , &baseName)
+            this.UPWFileMap[baseName] := A_LoopFileFullPath
+         }
+      }
+      dLog("Cached a total of " this.UPWFileMap.Count " UWP icons")
+
+   }
+   /**
+    * Return the location of athe bitmap file for a UWP app
+    * @param AppName AMUID for UWP App
+    * @returns File name of the bitmap file for it (0 if not found)
+    */
+   Static AppToBitmap(AppName) {
+      return this.UPWFileMap.Get(AppName,0)
    }
    ;----------------------------------------------------------------------
    ; Cache the UWPLogo if needed
@@ -51,20 +72,22 @@ Class UWP {
    ;----------------------------------------------------------------------
    Static __cacheUWPLogo(AUMID) {
 
-      AppName        := this.nameMap[AUMID]
-      sourceManifest := this.manMap[AUMID]
-      AppID          := this.IDMap[AUMID]
+      AppObj := this.AppMap[AUMID]
       logoTargetLoc  := this.UWPIcons
-      targetFileName := logoTargetLoc "\" AppName ".png"
+      targetFileName := logoTargetLoc "\" AppObj.Name ".png"
       ; Don't overwrite either png or ico files if they exist
-      If (FileExist(logoTargetLoc "\" AppName ".png") OR FileExist(logoTargetLoc "\" AppName ".ico"))
+      If (FileExist(logoTargetLoc "\" AppObj.Name ".png") OR FileExist(logoTargetLoc "\" AppObj.Name ".ico"))
          Return 1
 
-      SplitPath(sourceManifest, &ManifestName, &dirname, &ext, &base)
-      Text := FileRead(sourceManifest)
+      SplitPath(AppObj.Manifest, &ManifestName, &dirname, &ext, &base)
+      Text := FileRead(AppObj.Manifest)
       ; Iterate through the desired icon sizes, smaller ones have less padding
-      For num in [44, 71, 150, 310] {
-         reString := 'sU)Id="' AppID '".+Square' num 'x' num 'Logo="(.+)"'
+      For num in [44, 71, 150, 310, "SmallLogo", "Logo"] {
+         ; Add SmallLogo=
+         if (IsNumber(num))
+            reString := 'sU)Id="' AppObj.ID '".+Square' num 'x' num 'Logo="(.+)"'
+         else
+            reString := 'sU)Id="' AppObj.ID '".+' num '="(.+)"'
          if (pos := RegExMatch(Text, reString, &mArray)) {
             ; Will need to scan files using the match as a pattern
             SplitPath(mArray[1], , &dir, &ext, &base)
@@ -88,7 +111,7 @@ Class UWP {
                warning("Couldn't find icon using pattern " logoFileWC)
             Break
          } Else {
-            debug(sourceManifest)
+            debug("Trying " num " in " AppObj.Manifest)
          }
       }
       ;----------------------------------------------------------------------
@@ -125,10 +148,10 @@ Class UWP {
       ; one time cache
       ; Get the AppID property directly, it is an ATOM so get the corresponding string
       If (Prop := GetProp(hWnd, PKEY_AppUserModel_ID)) {
-         ; BUG - Files app is returning a 0 for property
+         ; BUG - Files app is returning a 0 for UserID property
          sz := VarSetStrCapacity(&AUMID, 256)
          rl := DllCall("Kernel32\GlobalGetAtomName", "Ptr", Prop, "Str", AUMID, "Int", sz)
-         Return this.nameMap.Has(AUMID) ? this.nameMap[AUMID] : WinGetProcessName(hWnd)
+         Return this.AppMap.Has(AUMID) ? this.AppMap[AUMID].Name : WinGetProcessName(hWnd)
       } Else If (WinExist(hWnd)) {
          warning("Failed to return property for '" WinGetProcessName(hWnd) "'")
          Return WinGetProcessName(hWnd)

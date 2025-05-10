@@ -24,10 +24,7 @@
 Class clsTaskView {
    hWndTohIcon      := Map()
    fNameTohIcon     := Map()
-   uwpIconPathCache := Map()
-   uwpPngPathCache  := Map()
    iconPath         := A_ScriptDir . "\Icons"	;104 removed static
-   UWPIcons         := this.iconPath . "\UWPIcons"
 
    __new() {
       ;----------------------------------------------------------------------------
@@ -41,28 +38,15 @@ Class clsTaskView {
       GroupAdd("DesktopClass", "ahk_class Shell_TrayWnd")                 ; Child windows that show up as main windows
       ; Ignore these window classes (doesn't require hiddenwindows on)
 
-      this.eventCB := 0
-      this.arrayTasks := Array() ; Public list of handles in tab-order
-      this.arrayHookOrder := Array()  ; Window tracking in correct order
+      this.eventCB         := 0
+      this.arrayTasks      := Array() ; Public list of handles in tab-order
+      this.arrayHookOrder  := Array()  ; Window tracking in correct order
       this.mapHookChildren := Map() ; hash to hold the child windows for specific window types
-      this.pidAppCache := Map()     ; mapping of the PID to the true UWP appname
+      this.pidAppCache     := Map()     ; mapping of the PID to the true UWP appname
       ; Blank GUI to allow task switching
       this.MyGui := Gui("-Caption +ToolWindow")
       ; child window callback
       this.CWCB := CallbackCreate(this.EnumChildWindowsProc.Bind(this), "Fast", 2)
-      ; this.sw := clsStopWatch()
-      ; Cache the custom icons
-      ; this.flag := false
-      c :=0
-      Loop Files this.UWPIcons . "\*.*" {
-         If (A_LoopFileExt ~= "i)ico|png") {
-            SplitPath(A_LoopFileFullPath, , , , &baseName)
-            this.uwpIconPathCache[baseName] := A_LoopFileFullPath
-            c++
-         }
-      }
-      debug("Cached a total of " c " UWP icons")
-
       ; Then Grab all of the initial windows and
       this.InitHook_Order()
 
@@ -210,12 +194,12 @@ Class clsTaskView {
    ; Cycles through open clients vs swap to prior
    ;----------------------------------------------------------------------------
    KeyboardSwitch(Direction, tlWindows) {
-      Static CT := "{Ctrl down}{Tab}{Ctrl up}"
-      Static CST := "{Shift down}{Ctrl down}{Tab}{Shift up}{Ctrl up}"
-      Static C6 := "{Ctrl down}{F6}{Ctrl up}"
-      Static CS6 := "{Shift down}{Ctrl down}{F6}{Shift up}{Ctrl up}"
-      Static CE := "{Alt down}w{Alt up}"
-      wasUsed := 0
+      Static CT      := "{Ctrl down}{Tab}{Ctrl up}"
+      Static CST     := "{Shift down}{Ctrl down}{Tab}{Shift up}{Ctrl up}"
+      Static C6      := "{Ctrl down}{F6}{Ctrl up}"
+      Static CS6     := "{Shift down}{Ctrl down}{F6}{Shift up}{Ctrl up}"
+      Static CE      := "{Alt down}w{Alt up}"
+             wasUsed := 0
       ; No longer used
       If (WinActive("ahk_group F6Class")) {
          ; Apps that se F6 vs Ctrl-Tab, generally single instance
@@ -538,7 +522,7 @@ Class clsTaskView {
          } Else If (WinExist(hWnd)) {
             ; 2. If not, then load from the window or normal process path (non UWP files)
             ; For windows that support  WM_GETICON, will generally have dynamic icons
-            ; so we never put those in the cache. (e.g. explorer)
+            ; so we never put those in the cache. (e.g. explorer), static icons are stored in cache
             If (ic := loadActiveOrStaticIcon(hWnd)) {
                Return ic
             ; 3. Otherwise see if we can load an icon from the process
@@ -546,15 +530,15 @@ Class clsTaskView {
                Return ic
             ; 4. No icon resource, try the pre-loaded UWP files or title
             } Else If (appName := UWP.AppName(hWnd)) {
-                  If (icnFname := this.uwpIconPathCache.Get(appName, false)) {
-                     If (ic := loadCacheOrFileIcon(icnFname, hWnd))
-                        Return ic
-                  } Else {
-                     warning("getMyIcon: Didn't find UWP app for path " procPath)
-                  }
+               If (icnFname := UWP.AppToBitmap(appName)) {
+                  If (ic := loadCacheOrFileIcon(icnFname, hWnd))
+                     Return ic
                } Else {
-                  warning("getMyIcon: Failed to find an existing UWP app name for " procPath)
+                  warning("getMyIcon: Didn't find UWP app for path " procPath)
                }
+            } Else {
+               warning("getMyIcon: Failed to find an existing UWP app name for " procPath)
+            }
          }
       } Catch As e {
          elog(e, "For Handle " hex(hWnd))
@@ -631,18 +615,18 @@ Class clsTaskView {
          Try {
             ; This is less generic, but may timeout if the window is busy
             ; Work needs longer, esp when apps are launching
-            clName := getClassName(hWnd)
             IconHwnd := SendMessage(WM_GETICON, big ? ICON_BIG : ICON_SMALL, DPI, , hWnd, , , , 200)
             If (A_TickCount - ticks) > 0
-               debug("Took " A_TickCount - ticks " ms to get icon handle for: " hex(hWnd) ", Class=" clName)
+               debug("Took " A_TickCount - ticks " ms to get icon handle for: " hex(hWnd) ", Class=" getClassName(hWnd))
          } Catch Error As e {
-            debug("Timeout " A_TickCount - ticks " ms getting icon handle for: " hex(hWnd) ", Class=" clName)
+            debug("Timeout " A_TickCount - ticks " ms getting icon handle for: " hex(hWnd) ", Class=" getClassName(hWnd))
             IconHwnd := 0
          }
          Return IconHwnd
       }
       ;----------------------------------------------------------------------
       ; Grab the static icon associated with the window
+      ; These will be cached
       ;----------------------------------------------------------------------
       getWindowStaticIcon(hWnd, big := 1) {
          Static GCLP_HICONSM := -34
@@ -656,8 +640,12 @@ Class clsTaskView {
    ; keep the icon in memory
    ;----------------------------------------------------------------------
    clearIconHandle(hWnd) {
-      If (this.hWndTohIcon.Has(hWnd)) {
+      If (icn := this.hWndTohIcon.Get(hWnd,0)) {
          this.hWndTohIcon.Delete(hWnd)
+         ; Don't delete the icon itself as it may be reused later
+         ; ; Go ahead and remove the icon handle as well
+         ; if (DllCall("DestroyIcon", "ptr", icn) = 0) ; usually works
+         ;    DllCall("DeleteObject", "ptr", icn)
       }
    }
 
@@ -731,13 +719,12 @@ Class clsTaskView {
                   ; NOTE - UWP Apps like calculator need to settle in before it will pass the isValidShellHookCandidate test below
                   ;        Other Apps do not, i.e. to become uncloaked
                   ;        Will transition from cloaked to not clocked
-                  Try debug(msgMap[wParam] " (D) event timeout, window class: " getClassName(hWnd) ", Handle: " hex(hWnd))
+                  Try debug(msgMap[wParam] " (W) event timeout, window class: " getClassName(hWnd) ", Handle: " hex(hWnd))
                }
                ; debug("Test 2 " getClassName(hWnd) ", Cloaked=" IsCloaked(hWnd) ", title=" WinGetTitle(hWnd))
                ; NOTE - do we sometimes have to check the title check for window creations?
                ; debug("Check Valid:" wParam ", Class=" WinGetClass(hWnd) ", hWnd=" hWnd ", Cloaked=" IsCloaked(hWnd))
                If (isValidShellHookCandidate(hWnd)) {
-                  ; debug("Is Valid:" wParam ", Class=" WinGetClass(hWnd) ", hWnd=" hWnd ", Cloaked=" IsCloaked(hWnd))
                   If ((A_TickCount - iStartTime) > 0)
                      Try debug(msgMap[wParam] ", Time to wait window class " getClassName(hWnd) " is " A_TickCount - iStartTime " ms, title=" WinGetTitle(hWnd))
                   ; Remove the instance that may already be in there
@@ -748,6 +735,7 @@ Class clsTaskView {
                   If (wParam == HSHELL_WINDOWACTIVATED) {
                      ; Cache the icon after a bit, in some UWP cases the window will be destroyed by the time the timer is called
                      ; TODO - is waiting critical? Can we also do this on window create?
+                     ; After creation there should be a activation event
                      If ( not this.hWndTohIcon.Has(hWnd)) {
                         ; debug("Setting Timer for " getClassName(hWnd) " " hex(hWnd) )
                         fn := this.getMyIcon.Bind(this, hWnd)

@@ -405,8 +405,9 @@ Class clsTaskGUI {
          IL_Destroy(PrevImageListID)	; garbage collect since same listview is always used
       }
       ; Use explorer full paths vs what is in the title
-      ; disabled for now, can slow down if explorer is busy (at work)
-      ;this.cacheExplorerPaths()
+      ; TODO - make this a setting
+      if (1)
+         this.cacheExplorerPaths()
 
       ; Iterate over each Alt-Tab task in taskArray
       ; Build up items in listview
@@ -427,20 +428,25 @@ Class clsTaskGUI {
             If (SubStr(expTit, 1, 3) == "::{")
                title := "  " . this.myGetTitle(itHwnd)
             Else
-               title := "  " . this.explorerPathCache[itHwnd]
+               title := "  " . expTit ; this.explorerPathCache[itHwnd]
          } Else {
             title := "  " . this.myGetTitle(itHwnd)
          }
          ; Remove Edge/Google Chrome at end since titles are usaully long
          ;================== Limit/Pad title length ====================
          While ((l := StrLen(title)) > this.maxTitLen) {
-            ; First try to split off tail at typicall boundaries
-            ; title := RegExReplace(title, "^(.+) [|-] .+?$", "$1", &matches := 0)
-            ; title := RegExReplace(title, "^(.+)[|\\-].+?$", "$1", &matches := 0)
-            title := RegExReplace(title, "^(.+)(/| - | \| |\\| ).+?$", "$1", &matches := 0)
-            ; Otherwise just trim it down from the front
-            If matches == 0
+            ; Explorer just trim the front
+            If (WinGetClass(itHwnd) = "CabinetWClass") {
                title := "…" . SubStr(Trim(title), l - this.maxTitLen)
+               break
+            } Else {
+            ; Chrome/Edge be smarter about trimming
+               title := RegExReplace(title, "^(.+)(/| - | \| |\\| ).*$", "$1", &matches := 0)
+               If matches == 0 {
+                  title := "…" . SubStr(Trim(title), l - this.maxTitLen)
+                  break
+               }
+            }
          } Else {
             ; Pad to minimum width
             title := Format(this.minTitLenPattern, title)

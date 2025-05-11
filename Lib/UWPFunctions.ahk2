@@ -23,36 +23,35 @@ Class UWP {
    Static AppMap := Map(), UPWFileMap := Map()
    ; Cache any needed UWP icons on startup
    Static __New() {
-      apps := 0
       if (NOT DirExist(this.UWPIcons))
          DirCreate(this.UWPIcons) 
-      dLog("Checking bitmaps from shell:AppsFolder")
+      now := A_TickCount
       For app in ComObject('Shell.Application').NameSpace('shell:AppsFolder').Items {
-         ; Look for UWP Store Apps only
+         ; Look for UWP Store Apps only, it taks ~500ms to iterate through all of the apps
+         ; Non-store apps look like this: calibre->{6D809377-6AF0-444B-8957-A3773F02200E}\Calibre2\calibre.exe
          If (app.Path ~= "!") {
             ; Store the AppUserModelId by the application display (icon) name
             AppID               := StrSplit(app.Path, "!")[2] ; -> This can be used to find the Application Id                       = "xxx" match in manifest like we do for the executable now
             appManifest         := app.ExtendedProperty("System.AppUserModel.PackageInstallPath") . "\AppxManifest.xml" ; this works, get path to manifest file + AppxManifest.xml
             AUMID               := app.Path
             this.AppMap[AUMID]  := {Name : app.Name, Manifest : appManifest, ID : AppID}
-            ; , FullName : app.ExtendedProperty("System.AppUserModel.PackageFullName")
-            ; debug(app.Name "->" appManifest)
-            ; Can use two below to find an icon in the manifest
+            ; FullName := app.ExtendedProperty("System.AppUserModel.PackageFullName") ; available but not used, same as the folder name in windowsapps
+            ; Find an appropriate icon in the manifest if needed
             this.__cacheUWPLogo(app.Path)
-            apps++
          }
       }
       ;----------------------------------------------------------------------
       ; Cache the icon file locations now
       ;----------------------------------------------------------------------
-      dLog("Checked a total of " apps " UWP icons from shell:AppsFolder")
+      dLog("Checked a total of " this.AppMap.Count " UWP Apps from shell:AppsFolder in " A_TickCount - now " msec")
+      now := A_TickCount
       Loop Files this.UWPIcons . "\*.*" {
          If (A_LoopFileExt ~= "i)ico|png") {
             SplitPath(A_LoopFileFullPath, , , , &baseName)
             this.UPWFileMap[baseName] := A_LoopFileFullPath
          }
       }
-      dLog("Cached a total of " this.UPWFileMap.Count " UWP icons")
+      dLog("Cached a total of " this.UPWFileMap.Count " UWP icons from " this.UWPIcons  " in " A_TickCount - now " msec")
 
    }
    /**
@@ -60,8 +59,8 @@ Class UWP {
     * @param AppName AMUID for UWP App
     * @returns File name of the bitmap file for it (0 if not found)
     */
-   Static AppToBitmap(AppName) {
-      return this.UPWFileMap.Get(AppName,0)
+   Static AppToBMFile(AppName) {
+      return this.UPWFileMap.Get(AppName, 0)
    }
    ;----------------------------------------------------------------------
    ; Cache the UWPLogo if needed
@@ -72,7 +71,7 @@ Class UWP {
    ;----------------------------------------------------------------------
    Static __cacheUWPLogo(AUMID) {
 
-      AppObj := this.AppMap[AUMID]
+      AppObj         := this.AppMap[AUMID]
       logoTargetLoc  := this.UWPIcons
       targetFileName := logoTargetLoc "\" AppObj.Name ".png"
       ; Don't overwrite either png or ico files if they exist
@@ -83,11 +82,12 @@ Class UWP {
       Text := FileRead(AppObj.Manifest)
       ; Iterate through the desired icon sizes, smaller ones have less padding
       For num in [44, 71, 150, 310, "SmallLogo", "Logo"] {
-         ; Add SmallLogo=
+         ; Look for logo after AppID
          if (IsNumber(num))
             reString := 'sU)Id="' AppObj.ID '".+Square' num 'x' num 'Logo="(.+)"'
          else
             reString := 'sU)Id="' AppObj.ID '".+' num '="(.+)"'
+
          if (pos := RegExMatch(Text, reString, &mArray)) {
             ; Will need to scan files using the match as a pattern
             SplitPath(mArray[1], , &dir, &ext, &base)
@@ -111,34 +111,30 @@ Class UWP {
                warning("Couldn't find icon using pattern " logoFileWC)
             Break
          } Else {
-            debug("Trying " num " in " AppObj.Manifest)
+            debug("Tried " num " in " AppObj.Manifest)
          }
       }
       ;----------------------------------------------------------------------
       ; Find the largest image that fits the path, better for resizing
       ;----------------------------------------------------------------------
       getBiggestLogo(patt) {
-         LogoName := ""
-         nfs := fs := 0
-         ; debug("Pattern=" patt)
+         LogoPath := ""
+         nfs := lfs := 0
          Loop Files patt {
-            ; Avoid alternate forms or high contracts versions
-            If ( NOT (A_LoopFileName ~= "altform" OR A_LoopFileName ~= "contrast")) {
+            ; Avoid alternate forms or high contrast versions
+            If ( NOT (A_LoopFileName ~= "altform|contrast|wide")) {
                nfs := FileGetSize(A_LoopFilePath)
-               ; debug("  Checking " A_LoopFileName ", size=" nfs)
-               If nfs > fs {
-                  LogoName := A_LoopFilePath
-                  fs := nfs
+               If nfs > lfs {
+                  LogoPath := A_LoopFilePath
+                  lfs := nfs
                }
             }
          }
-         ; debug(" Using " LogoName ", size=" fs)
-         Return LogoName
+         Return LogoPath
       }
    }
-
    /**
-    * Return the Common Name for some app
+    * Return the Common Name for some UWP app from the window handle
     * @param hWnd Handle of UWP app to get info on
     * @returns {String} UWP Short App Name
     */
@@ -148,12 +144,11 @@ Class UWP {
       ; one time cache
       ; Get the AppID property directly, it is an ATOM so get the corresponding string
       If (Prop := GetProp(hWnd, PKEY_AppUserModel_ID)) {
-         ; BUG - Files app is returning a 0 for UserID property
-         sz := VarSetStrCapacity(&AUMID, 256)
-         rl := DllCall("Kernel32\GlobalGetAtomName", "Ptr", Prop, "Str", AUMID, "Int", sz)
-         Return this.AppMap.Has(AUMID) ? this.AppMap[AUMID].Name : WinGetProcessName(hWnd)
+         ; BUG - Files app is returning a 0 for AppID property
+         AUMID := GetGlobalAtomName(Prop)
+         Return (AUMID AND this.AppMap.Has(AUMID)) ? this.AppMap[AUMID].Name : WinGetProcessName(hWnd)
       } Else If (WinExist(hWnd)) {
-         warning("Failed to return property for '" WinGetProcessName(hWnd) "'")
+         warning("Failed to return property for '" WinGetTitle(hWnd) "'")
          Return WinGetProcessName(hWnd)
       } Else {
          Return ""

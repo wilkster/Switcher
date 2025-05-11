@@ -212,12 +212,17 @@ GetLastActivePopup(hWnd) {
 GetWindow(hwnd, flag := 0x00000004) {
    Return DllCall("User32.dll\GetWindow", "Ptr", hwnd, "UInt", flag)
 }
-GetTopWindow() => DllCall("GetTopWindow", "Ptr", DllCall("GetDesktopWindow", "Ptr"))
-GetWindowTextLength(hWnd) => DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd)
-winHasTitle(hWnd) => (DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd) > 0)
-GetProp(hWnd, Prop) => DllCall("User32.dll\GetPropW", "Ptr", hWnd, "Str", Prop, "Ptr")
+GetTopWindow()                           => DllCall("GetTopWindow", "Ptr", DllCall("GetDesktopWindow", "Ptr"))
+GetWindowTextLength(hWnd)                => DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd)
+winHasTitle(hWnd)                        => (DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd) > 0)
+GetProp(hWnd, Prop)                      => DllCall("User32.dll\GetPropW", "Ptr", hWnd, "Str", Prop, "Ptr")
 EnumChildWindows(hWnd, mcb, params := 0) => DllCall("User32.dll\EnumChildWindows", "Ptr", hWnd, "Ptr", mcb, "Ptr", params)
-UpdateWindow(hWnd) => DllCall("User32.dll\UpdateWindow", "Ptr", hWnd)
+UpdateWindow(hWnd)                       => DllCall("User32.dll\UpdateWindow", "Ptr", hWnd)
+GetGlobalAtomName(Prop) {
+   sLen := VarSetStrCapacity(&AUMID, 256)
+   sz   := DllCall("Kernel32\GlobalGetAtomName", "Ptr", Prop, "Str", &AUMID, "Int", sLen)
+   Return sz ? AUMID : 0
+}
 GetWindowMinMax(hWnd) {
    static wp:= stWINDOWPLACEMENT()
    DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", wp.Ptr)

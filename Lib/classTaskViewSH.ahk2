@@ -504,44 +504,42 @@ Class clsTaskView {
    ; Try to load an icon and hash it by handle
    ; Try by Path first
    ; Then by UWP App Name if Path didn't have one
-   ; If we don't have one then search through the manifest to find one
-   ; and copy it over
-   ; TODO - Should we make an immediate decision on UWP vs regular programs?
+   ; Called during initial app launching/startup so by the time
+   ; the task list is used the cache should hold all of the non-active icons
    ;----------------------------------------------------------------------
    getMyIcon(hWnd) {
       Static H := "HICON:*"
       Static defIcon := this.iconPath . "\Win" OSVersion() ".png"
-      ; Static CGC := "Windows.UI.Core.CoreWindow1"
-      ; Static AFC := "ApplicationFrameWindow"
 
-      Try {
-         ; 1. Check the cache first, 99.9% will be in the cache
-         ;    If we were able to pull active icons, they wond't be in the cache
-         If (icnHwnd := this.hWndTohIcon.Get(hWnd, false)) {
-            Return H . icnHwnd
-         } Else If (WinExist(hWnd)) {
-            ; 2. If not, then load from the window or normal process path (non UWP files)
-            ; For windows that support  WM_GETICON, will generally have dynamic icons
-            ; so we never put those in the cache. (e.g. explorer), static icons are stored in cache
-            If (ic := loadActiveOrStaticIcon(hWnd)) {
-               Return ic
-            ; 3. Otherwise see if we can load an icon from the process
-            } Else If (ic := loadCacheOrFileIcon(procPath := getProcessPath(hWnd), hWnd)) {
-               Return ic
-            ; 4. No icon resource, try the pre-loaded UWP files or title
-            } Else If (appName := UWP.AppName(hWnd)) {
-               If (icnFname := UWP.AppToBitmap(appName)) {
-                  If (ic := loadCacheOrFileIcon(icnFname, hWnd))
-                     Return ic
-               } Else {
-                  warning("getMyIcon: Didn't find UWP app for path " procPath)
-               }
+         ; 1. Check the cache first, 99.9% static will be in the cache
+         ; If we were able to pull active icons, they wond't be in the cache
+      If (ic := this.hWndTohIcon.Get(hWnd, false)) {
+         Return H . ic
+      } Else If (WinExist(hWnd)) {
+         ; 2. If not in cache, then load from the window or normal process path (non UWP files)
+         ; For windows that support  WM_GETICON, will generally have dynamic icons (e.g. explorer)
+         ; so we never put those in the cache. Static icons are stored in cache for reuse
+         If (ic := getWindowActiveIcon(hWnd)) {
+            Return H . ic
+         ; 3. If no dyamic icon is available then try a static icon and cache it
+         ; Everything below will be cached after first time with the handle.
+         } Else If (ic := getWindowStaticIcon(hWnd)) {
+            Return H . (this.hWndTohIcon[hWnd] := ic)
+         ; 4. Otherwise see if we can load an icon from the process
+         } Else If (hic := loadCacheOrFileIcon(procPath := getProcessPath(hWnd), hWnd)) {
+            Return hic
+         ; 5. No icon resource in exe, try the pre-loaded UWP files or title
+         ; For UWP procPath would equal ApplicationFrameHost.exe which has no resources
+         } Else If (appName := UWP.AppName(hWnd)) {
+            If (icnFname := UWP.AppToBMFile(appName)) {
+               If (ic := loadCacheOrFileIcon(icnFname, hWnd))
+                  Return ic
             } Else {
-               warning("getMyIcon: Failed to find an existing UWP app name for " procPath)
+               warning("getMyIcon: Didn't find UWP logo for app " appName)
             }
+         } Else {
+            warning("getMyIcon: Failed to find an existing UWP app name for " procPath)
          }
-      } Catch As e {
-         elog(e, "For Handle " hex(hWnd))
       }
       ; Try the default if all other attempts failed
       Return loadCacheOrFileIcon(defIcon, hWnd)
@@ -563,33 +561,17 @@ Class clsTaskView {
          }
       }
       ;----------------------------------------------------------------------
-      ; create and remove hash entries for hWnd -> Icon
-      ; See if we have a previous or new icon from a window
-      ;----------------------------------------------------------------------
-      loadActiveOrStaticIcon(hWnd) {
-         If (hicon := getWindowActiveIcon(hWnd)) {
-            ; Does not work for UWP or some windows apps
-            ; debug("getWindowActiveIcon Icon " WinGetTitle(hWnd))
-            ; Note - NOT cached for windows since they change their icons occasionally
-            Return H . hicon
-         } Else If (hicon := getWindowStaticIcon(hWnd)) {
-            ; debug("getWindowStaticIcon Icon " WinGetTitle(hWnd))
-            ; If above timed out get the static window icon
-            Return H . (this.hWndTohIcon[hWnd] := hicon)
-         }
-      }
-      ;----------------------------------------------------------------------
       ; See if we have a previous or new icon from a file
       ;----------------------------------------------------------------------
       loadCacheOrFileIcon(fName, hWnd) {
          Try {
             ; icon is handle, key is the executable
-            ; Need to rethink the ordering, should only rely on the window handle cached
             If (this.fNameTohIcon.Has(fName)) {
                ; debug("Reusing Icon " WinGetTitle(hWnd))
                Return H . (this.hWndTohIcon[hWnd] := this.fNameTohIcon[fName])
+            ; This will mostly be for UWP apps, convert image to icon on load
             } Else If (icon := LoadPicture(fName, "Icon1", &iType)) {
-               ; debug("LoadPicture Icon " WinGetTitle(hWnd))
+               ; debug("LoadPicture Icon " fName " -> " WinGetTitle(hWnd))
                Return H . (this.fNameTohIcon[fName] := this.hWndTohIcon[hWnd] := icon)
             } Else {
                Return 0
@@ -609,17 +591,16 @@ Class clsTaskView {
        */
       getWindowActiveIcon(hWnd, big := 1) {
          Static WM_GETICON := 0x007F, ICON_SMALL := 0, ICON_BIG := 1
-         Static GetClassLong := 'GetClassLong' . (A_PtrSize = 4 ? '' : 'Ptr')
          ticks := A_TickCount
          DPI := DllCall("GetDpiForWindow", "Ptr", hWnd)
          Try {
             ; This is less generic, but may timeout if the window is busy
             ; Work needs longer, esp when apps are launching
             IconHwnd := SendMessage(WM_GETICON, big ? ICON_BIG : ICON_SMALL, DPI, , hWnd, , , , 200)
-            If (A_TickCount - ticks) > 0
+            If (A_TickCount - ticks) > 10
                debug("Took " A_TickCount - ticks " ms to get icon handle for: " hex(hWnd) ", Class=" getClassName(hWnd))
          } Catch Error As e {
-            debug("Timeout " A_TickCount - ticks " ms getting icon handle for: " hex(hWnd) ", Class=" getClassName(hWnd))
+            warning("Timeout " A_TickCount - ticks " ms getting icon handle for: " hex(hWnd) ", Class=" getClassName(hWnd))
             IconHwnd := 0
          }
          Return IconHwnd
@@ -629,9 +610,9 @@ Class clsTaskView {
       ; These will be cached
       ;----------------------------------------------------------------------
       getWindowStaticIcon(hWnd, big := 1) {
-         Static GCLP_HICONSM := -34
-         Static GCLP_HICON := -14
-         Return DllCall("GetClassLongPtr", "Ptr", hWnd, "Int", big ? GCLP_HICON : GCLP_HICONSM)
+         Static GetClassProc := GetModHandle("GetClassLong" . (A_PtrSize = 4 ? '' : 'PtrW'), "User32.dll")
+         Static GCLP_HICONSM := -34, GCLP_HICON := -14
+         Return DllCall(GetClassProc, "Ptr", hWnd, "Int", big ? GCLP_HICON : GCLP_HICONSM)
       }
 
    }

@@ -15,6 +15,7 @@ minimize, restore, close, move desktops, move monitors and so on.
 
 Right mouse button on each entry allows direct control of window placement
 
+![image](https://github.com/user-attachments/assets/80152ecc-e8b6-45dd-a0bd-b5e96cec44e9)
 
 ## Hotkeys - Edit in Switcher.ahk2 file
 

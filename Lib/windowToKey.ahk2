@@ -26,21 +26,17 @@ class windowToKey {
       ; Can loop this over keys of interest
       ; Note requires numlock to be off
       SetNumLockState(0)
-      ; HACK - Fix this if we can detect a real numeric keypad
-      ; Orkas keyboard is kinda broken
-      if (A_ComputerName != "Orka") {
-         for kp in keyArray {
+      ; TODO - make this an option via settings
+      If (1) {
+         For kp in keyArray {
             ; keypad to jump to
-            HotKey(kp, this.popKey.Bind(this,kp))
+            Hotkey(kp, this.popKey.Bind(this, kp))
             ; Ctrl num pad to add
-            HotKey("^" . kp, this.pushKey.Bind(this,kp))
+            Hotkey("^" . kp, this.pushKey.Bind(this, kp))
             ; Ctrl-Alt to remove
-            HotKey("^!" . kp, this.removeKey.Bind(this,kp))
+            Hotkey("^!" . kp, this.removeKey.Bind(this, kp))
             this.keyNameMap[kp] := keyNames[A_Index]
-            ; IDEA - Do we want ability to clear the key?
-         }                 
-      } Else {
-         debug("Skipping NumPad hotkeys on " A_ComputerName)
+         }
       }
    }
    __delete() {

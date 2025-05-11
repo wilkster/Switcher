@@ -62,7 +62,6 @@ OnExit ExitHandler
 #Include classGuiView.ahk2               ; Alt-Tab replacement GUI
 #Include UWPFunctions.ahk2               ; Functions related to UWP apps
 dlog("All Include Files Loaded")
-
 ; =====================================================================
 ;                          G L O B A L  O B J E C T S
 ; =====================================================================
@@ -260,7 +259,5 @@ swapPrevSibling(Direction := 1) {
    ; If reload failed it will pass thru here
    SoundBeep(600, 200)
 }
-
 Suspend(0)
-
 dlog(A_ScriptName " is Ready for Processing")

@@ -13,7 +13,8 @@ minimize, restore, close, move desktops, move monitors and so on.
 
 ![image](https://github.com/user-attachments/assets/8b12d719-a656-4e74-be04-06c9f7d5d03c)
 
-Right mouse button on each entry allows direct control of window placement
+Right mouse button on each entry allows direct control of window placement, monitor/desktop location.
+You can also control other window actions such as move offscreen windows to active monitor.
 
 ![image](https://github.com/user-attachments/assets/80152ecc-e8b6-45dd-a0bd-b5e96cec44e9)
 

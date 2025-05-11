@@ -41,13 +41,19 @@ DetectHiddenText(0)         ; Not sure why this is set
 ; I am handlAddEntrying DPI per window for the GUI
 Global defDPIContext   := DllCall("user32.dll\GetThreadDpiAwarenessContext", "Ptr")
 Global A_OSVer         := StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
-Global INI             := A_ScriptDir . "\" . "Switcher.ini"
 Global SETTINGS        := Object()
-SETTINGS.NumericKeypad := IniRead(INI,"Settings","NumericKeyboard",false)
-SETTINGS.ExplorerPath  := IniRead(INI,"Settings","ExplorerPath",true)
+SETTINGS.Path          := A_AppData . "\Switcher"
+SETTINGS.File          := SETTINGS.Path . "\Switcher.ini"
+SETTINGS.NumericKeypad := IniRead(SETTINGS.File,"Settings","NumericKeyboard",false)
+SETTINGS.ExplorerPath  := IniRead(SETTINGS.File,"Settings","ExplorerPath",true)
+If !FileExist(SETTINGS.Path)
+   DirCreate(SETTINGS.Path)
+IniWrite(SETTINGS.NumericKeypad, SETTINGS.File, "Settings", "NumericKeyboard")
+IniWrite(SETTINGS.ExplorerPath, SETTINGS.File, "Settings", "ExplorerPath")
+
 A_TrayMenu.Add()
 ; TODO - later addd/handle check items in menu
-A_TrayMenu.Add("Edit Settings File", (*) => Run(INI))  ; Creates a new menu item.
+A_TrayMenu.Add("Edit Settings File", (*) => Run(SETTINGS.File))  ; Creates a new menu item.
 
 DllCall("SetThreadDpiAwarenessContext", "Ptr", -4, "Ptr")
 ; Want dark menus if dark mode set
@@ -86,15 +92,14 @@ dlog("Global Objects Created")
 ;----------------------------------------------------------------------
 ExitHandler(ExitReason, ExitCode) {
    Global SETTINGS
-   Global INI
    desktopTracker.__delete()
    desktopTracker.__delete()
    guiObject.__delete()
    keyPadAssigner.__delete()
    taskObject.__delete()
    ; Not currently set in here, just by hand
-   ; IniWrite(SETTINGS.NumericKeypad, INI, "Settings", "NumericKeyboard")
-   ; IniWrite(SETTINGS.ExplorerPath, INI, "Settings", "ExplorerPath")
+   ; IniWrite(SETTINGS.NumericKeypad, SETTINGS.Path, "Settings", "NumericKeyboard")
+   ; IniWrite(SETTINGS.ExplorerPath, SETTINGS.Path, "Settings", "ExplorerPath")
    dlog("Exiting Autohotkey, ExitReason=" ExitReason ", ExitCode=" ExitCode)
 }
 

@@ -15,6 +15,7 @@
 
 class windowToKey {
    __new(tvObj) {
+      Global SETTINGS
       ; "NumpadIns"
       static keyArray := ["NumpadEnd","NumpadDown","NumpadPgDn","NumpadLeft","NumpadClear","NumpadRight","NumpadHome","NumpadUp","NumpadPgUp"]
       static keyNames := ["𝟭","𝟮","𝟯","𝟰","𝟱","𝟲","𝟳","𝟴","𝟵"] ; 𝟬 𝟭 𝟮 𝟯 𝟰 𝟱 𝟲 𝟳 𝟴 𝟵 http://xahlee.info/comp/unicode_math_font.html
@@ -27,7 +28,7 @@ class windowToKey {
       ; Note requires numlock to be off
       SetNumLockState(0)
       ; TODO - make this an option via settings
-      If (1) {
+      If (SETTINGS.NumericKeypad) {
          For kp in keyArray {
             ; keypad to jump to
             Hotkey(kp, this.popKey.Bind(this, kp))

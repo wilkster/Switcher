@@ -16,6 +16,7 @@ A_HotkeyInterval := 99000000
 #SingleInstance
 #Warn All, OutputDebug
 #ClipboardTimeout 3000  ; Default is 1000
+
 /*
    Docs - DllFile may be omitted when calling a function that resides in User32.dll, Kernel32.dll, ComCtl32.dll, or Gdi32.dll
 */
@@ -37,9 +38,16 @@ SendMode("Input")           ; uses the SendInput method for Send, SendText, Clic
 SetTitleMatchMode(2)        ; match anywhere in text, used for VBA stuff
 DetectHiddenWindows(0)      ; needed to check if pop-up gui is hidden or not
 DetectHiddenText(0)         ; Not sure why this is set
-; I am handling DPI per window for the GUI
-Global defDPIContext := DllCall("user32.dll\GetThreadDpiAwarenessContext", "Ptr")
-Global A_OSVer       := StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
+; I am handlAddEntrying DPI per window for the GUI
+Global defDPIContext   := DllCall("user32.dll\GetThreadDpiAwarenessContext", "Ptr")
+Global A_OSVer         := StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
+Global INI             := A_ScriptDir . "\" . "Switcher.ini"
+Global SETTINGS        := Object()
+SETTINGS.NumericKeypad := IniRead(INI,"Settings","NumericKeyboard",false)
+SETTINGS.ExplorerPath  := IniRead(INI,"Settings","ExplorerPath",true)
+A_TrayMenu.Add()
+; TODO - later addd/handle check items in menu
+A_TrayMenu.Add("Edit Settings File", (*) => Run(INI))  ; Creates a new menu item.
 
 DllCall("SetThreadDpiAwarenessContext", "Ptr", -4, "Ptr")
 ; Want dark menus if dark mode set
@@ -77,12 +85,16 @@ dlog("Global Objects Created")
 ; Clean up objects created above best as possible
 ;----------------------------------------------------------------------
 ExitHandler(ExitReason, ExitCode) {
-   Global
+   Global SETTINGS
+   Global INI
    desktopTracker.__delete()
    desktopTracker.__delete()
    guiObject.__delete()
    keyPadAssigner.__delete()
    taskObject.__delete()
+   ; Not currently set in here, just by hand
+   ; IniWrite(SETTINGS.NumericKeypad, INI, "Settings", "NumericKeyboard")
+   ; IniWrite(SETTINGS.ExplorerPath, INI, "Settings", "ExplorerPath")
    dlog("Exiting Autohotkey, ExitReason=" ExitReason ", ExitCode=" ExitCode)
 }
 

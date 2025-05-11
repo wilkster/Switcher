@@ -375,7 +375,7 @@ Class clsTaskGUI {
    ; Assume tasklist has been filled
    ;----------------------------------------------------------------------------
    lvPopulate() {
-
+      Global SETTINGS
       Static LVM_SETHOVERTIME := 0x1047
       pidCache := Map()
       pidCounter := 0
@@ -405,8 +405,7 @@ Class clsTaskGUI {
          IL_Destroy(PrevImageListID)	; garbage collect since same listview is always used
       }
       ; Use explorer full paths vs what is in the title
-      ; TODO - make this a setting
-      if (1)
+      if (SETTINGS.ExplorerPath)
          this.cacheExplorerPaths()
 
       ; Iterate over each Alt-Tab task in taskArray

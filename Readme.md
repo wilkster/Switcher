@@ -42,3 +42,4 @@ The assignments will show up in the switcher window. Clicking the assignment wil
 |---|---|
 |Ctrl-<keypad #>|Assign the active window to be restored when pressing <keypad #>|
 |Ctrl-Alt-<keypad #>|Unassign the window assigned to this keypad|
+|<keypad #>|If previously assigned, makes assigned window active.|

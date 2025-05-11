@@ -34,11 +34,14 @@ You can also control other window actions such as move offscreen windows to acti
 ## Keypad Assignment for Windows
 
 Note: This only work if your keyboard has a full numeric keypad such as full size keyboard.
-The assignments will show up in the switcher window. Clicking the assignment will remove it.
+The assignments will show up in the switcher window. Clicking the assignment will remove it. 
+
+The computer will beep in three tones when one of the numeric keypads are used
 
 ![image](https://github.com/user-attachments/assets/793d65a9-8ece-4d74-9ce9-f8b7296c9a63)
 
 |Hotkey|Description|
 |---|---|
-|Ctrl-<keypad #>|Assign the active window to be restored when pressing <keypad #>|
-|Ctrl-Alt-<keypad #>|Unassign the window assigned to this keypad|
+|Ctrl-<keypad #>|Assign the active window to be restored when pressing <keypad #>, you will here a low-high tone when assigned.|
+|Ctrl-Alt-<keypad #>|Unassign the window assigned to this keypad, you will here a high-low tone when unassigned|
+|<keypad #>|If previously assigned, makes assigned window active. If not assigned you will here a brief low tone.|

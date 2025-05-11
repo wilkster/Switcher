@@ -4,10 +4,17 @@ Supercharged Alt-Tab window manager that handles windows on multiple monitors
 and multiple desktops. Allows more detailed window control vs the built-in
 Alt-Tab tool on windows.
 
-When activated on a monitor the list of windows appear. Their window state, on-top, 
+When activated on a monitor the list of windows appear. Their window state, on-top,
 desktop and monitor locations are shown as well. Each of the icons can be clicked to change the state.
+The windows are always listed in a last used state, the same as the Alt-Tab approach.
+
+The icons shown to the right of each window can be clicked directly with the mouse to
+minimize, restore, close, move desktops, move monitors and so on.
 
 ![image](https://github.com/user-attachments/assets/8b12d719-a656-4e74-be04-06c9f7d5d03c)
+
+Right mouse button on each entry allows direct control of window placement
+
 
 ## Hotkeys - Edit in Switcher.ahk2 file
 

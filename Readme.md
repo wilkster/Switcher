@@ -27,6 +27,8 @@ desktop and monitor locations are shown as well. Each of the icons can be clicke
 Note: This only work if your keyboard has a full numeric keypad such as full size keyboard.
 The assignments will show up in the switcher window. Clicking the assignment will remove it.
 
+![image](https://github.com/user-attachments/assets/793d65a9-8ece-4d74-9ce9-f8b7296c9a63)
+
 |Hotkey|Description|
 |---|---|
 |Ctrl-<keypad #>|Assign the active window to be restored when pressing <keypad #>|

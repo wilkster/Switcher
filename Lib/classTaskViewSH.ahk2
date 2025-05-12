@@ -33,10 +33,9 @@ Class clsTaskView {
       ; MDI Apps where the child windows show up as parents as far as Windows is concerned
       GroupAdd("ChildWindowClass", "ahk_class JWinproj-WhimperMainClass")     ; MS Project is MDI
       GroupAdd("ChildWindowClass", "ahk_class VISIOA")                        ; Visio is MDI
-      ;GroupAdd("ChildWindowClass", "ahk_class SlickEdit")
+      ; Ignore these window classes (doesn't require hiddenwindows on)
       GroupAdd("DesktopClass", "ahk_class WorkerW")                       ; Child windows that show up as main windows
       GroupAdd("DesktopClass", "ahk_class Shell_TrayWnd")                 ; Child windows that show up as main windows
-      ; Ignore these window classes (doesn't require hiddenwindows on)
 
       this.eventCB         := 0
       this.arrayTasks      := Array() ; Public list of handles in tab-order
@@ -111,7 +110,6 @@ Class clsTaskView {
    ;===========================================================================================================
    ;----------------------------------------------------------------------------
    ; Swap to prior task based on shell hook monitoring
-   ; TODO - option to skip minimized
    ;----------------------------------------------------------------------------
    swapPrevTask(CheckAll := 0) {
       ; should we prune first?
@@ -129,9 +127,9 @@ Class clsTaskView {
             debug("The Last remaining window was Minimized, restoring:" WinGetTitle(myHwnd))
             this.myWinActivate(myHwnd)
          } Else If (this.arrayHookOrder.Length >= 2) {
-            recent := this.arrayHookOrder.Clone()
-            myHwnd := recent.RemoveAt(1)    ; extract active
-            myPID := WinGetPID(myHwnd)
+            recent  := this.arrayHookOrder.Clone()
+            myHwnd  := recent.RemoveAt(1)    ; extract active
+            myPID   := WinGetPID(myHwnd)
             myClass := WinGetClass(myHwnd)
             ; Loop over remaining windows (in tracked z-order)
             ; find first one that is in a different class
@@ -653,24 +651,24 @@ Class clsTaskView {
          13, "HSHELL_WINDOWREPLACED", 14, "HSHELL_WINDOWREPLACING", 15, "HSHELL_HIGHBIT", 16, "HSHELL_FLASH",
          17, "HSHELL_RUDEAPPACTIVATED")
 
-      Static pidMap := Map()
-      Static HSHELL_WINDOWCREATED := 1,  ;A top-level, unowned window has been created. The window exists when the system calls this hook.
-         HSHELL_WINDOWDESTROYED := 2,  ;A top-level, unowned window is about to be destroyed. The window still exists when the system calls this hook.
-         HSHELL_ACTIVATESHELLWINDOW := 3,
-         HSHELL_WINDOWACTIVATED := 4,  ;The activation has changed to a different top-level, unowned window.
-         HSHELL_GETMINRECT := 5,
-         HSHELL_REDRAW := 6,
-         HSHELL_TASKMAN := 7,
-         HSHELL_LANGUAGE := 8,
-         HSHELL_SYSMENU := 9,
-         HSHELL_ENDTASK := 10,
-         HSHELL_ACCESSIBILITYSTATE := 11,
-         HSHELL_APPCOMMAND := 12,
-         HSHELL_WINDOWREPLACED := 13,
-         HSHELL_WINDOWREPLACING := 14,
-         HSHELL_HIGHBIT := 15,
-         HSHELL_FLASH := 16,
-         HSHELL_RUDEAPPACTIVATED := 17  ; not sure if this is legit
+      Static pidMap                     := Map()
+      Static HSHELL_WINDOWCREATED       := 1,  ;A top-level,                                         unowned window has been created. The window exists when the system calls this hook.
+             HSHELL_WINDOWDESTROYED     := 2,  ;A top-level,                                         unowned window is about to be destroyed. The window still exists when the system calls this hook.
+             HSHELL_ACTIVATESHELLWINDOW := 3,
+             HSHELL_WINDOWACTIVATED     := 4,  ;The activation has changed to a different top-level, unowned window.
+             HSHELL_GETMINRECT          := 5,
+             HSHELL_REDRAW              := 6,
+             HSHELL_TASKMAN             := 7,
+             HSHELL_LANGUAGE            := 8,
+             HSHELL_SYSMENU             := 9,
+             HSHELL_ENDTASK             := 10,
+             HSHELL_ACCESSIBILITYSTATE  := 11,
+             HSHELL_APPCOMMAND          := 12,
+             HSHELL_WINDOWREPLACED      := 13,
+             HSHELL_WINDOWREPLACING     := 14,
+             HSHELL_HIGHBIT             := 15,
+             HSHELL_FLASH               := 16,
+             HSHELL_RUDEAPPACTIVATED    := 17  ; not sure if this is legit
       If (hWnd = 0)
          Return
 

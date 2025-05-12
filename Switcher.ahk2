@@ -7,8 +7,7 @@
 ; NOTE - Run Elevated if we want to work over Task Manager/Event Viewer/Task Scheduler
 ; =====================================================================
 ;A_IconTip := "Tom's AHK Tools Version " A_AhkVersion ", running on " A_ComputerName
-;TraySetIcon(A_ScriptDir "\Icons\TomsAHK.ico")
-;
+TraySetIcon(A_ScriptDir "\Icons\Switcher.ico")
 #Requires AutoHotkey >= v2.1-alpha.4
 dlog(A_ScriptName ": Loading Autohotkey Version " A_AhkVersion " on " A_ComputerName)
 A_MaxHotkeysPerInterval := 99000000
@@ -44,12 +43,14 @@ Global A_OSVer         := StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
 Global SETTINGS        := Object()
 SETTINGS.Path          := A_AppData . "\Switcher"
 SETTINGS.File          := SETTINGS.Path . "\Switcher.ini"
-SETTINGS.NumericKeypad := IniRead(SETTINGS.File,"Settings","NumericKeyboard",false)
+SETTINGS.NumericKeypad := IniRead(SETTINGS.File,"Settings","NumericKeyboard",true)
 SETTINGS.ExplorerPath  := IniRead(SETTINGS.File,"Settings","ExplorerPath",true)
+SETTINGS.CheckAll      := IniRead(SETTINGS.File,"Settings","SwapToMinimized",false)
 If !FileExist(SETTINGS.Path)
    DirCreate(SETTINGS.Path)
 IniWrite(SETTINGS.NumericKeypad, SETTINGS.File, "Settings", "NumericKeyboard")
 IniWrite(SETTINGS.ExplorerPath, SETTINGS.File, "Settings", "ExplorerPath")
+IniWrite(SETTINGS.CheckAll, SETTINGS.File, "Settings", "SwapToMinimized")
 
 A_TrayMenu.Add()
 ; TODO - later addd/handle check items in menu
@@ -255,8 +256,9 @@ smartWheelLeft() {
 ; Task View Items
 ;========================================================================================================
 swapPrevTask() {
+   Global SETTINGS
    If (IsObject(taskObject))
-      taskObject.swapPrevTask()
+      taskObject.swapPrevTask(SETTINGS.CheckAll)
 }
 swapPrevSibling(Direction := 1) {
    If (IsObject(taskObject))
@@ -272,7 +274,7 @@ swapPrevSibling(Direction := 1) {
 ^!=:: {
    SoundBeep(900, 80)
    Reload
-   Sleep(500)
+   Sleep(1000)
    ; If reload failed it will pass thru here
    SoundBeep(600, 200)
 }

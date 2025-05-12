@@ -58,6 +58,7 @@ class clsDesktopMonitor {
          }
          this.lastDesktop := dt
       }
+      ; debug("Desktop Icon change " dt " vs " this.lastDesktop)
       return dt
    }
    ;----------------------------------------------------------------------------

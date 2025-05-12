@@ -421,6 +421,7 @@ Class LV_Colors {
       ; Return codes from each stage
       Static CDRF_DODEFAULT         := 0x0
       Static CDRF_SKIPDEFAULT       := 0x4
+      Static CDRF_NOTIFYPOSTPAINT   := 0x10
       Static CDRF_NOTIFYITEMDRAW    := 0x20
       Static CDRF_NOTIFYSUBITEMDRAW := 0x20
       
@@ -480,11 +481,10 @@ Class LV_Colors {
             ; Callback for Cells on a row, triggered from CDRF_NOTIFYSUBITEMDRAW above
             ; ALL cells in a listview will be called-back when cell location changes
             If (ColColor := this.Cols.Get(Col, "")) {
-               ; debug("--CDDS_SUBITEMPREPAINT Row=" Row ", Col=" this.lastCol)
                ; Column override, either regular text or hot track text if mouse is over cell
                If (this.hotTracking AND this.lastRow = Row AND this.lastCol = Col) {
                   ; return CDRF_NEWFONT - https://learn.microsoft.com/en-us/windows/win32/controls/using-custom-draw 
-                  ; If mouse down, then make it look depressed with smaller font
+                  ; If mouse down, then make it look depressed with smaller font and dimmer background
                   if (this.mouseDown) {
                      ; Button with active backbround OR
                      ; Non-button text, so adjust font differently
@@ -494,14 +494,11 @@ Class LV_Colors {
                      } else {
                         myGDI.SelectObject(Ldata.nmc.hdc, this.selFont )
                      }
-; DllCall("RoundRect", "PTR", Ldata.nmc.hdc, "Int", Ldata.rcText.Left, "Int", Ldata.rcText.Top, "Int", Ldata.rcText.Right, "Int", Ldata.rcText.Bottom, "Int", 10, "Int", 10)
-
                   } else {
                      ; Regular font and hot track color for non mouse-down
                      PutIfVal(ColColor["HB"], ColColor["HT"]) 
                      myGDI.SelectObject(Ldata.nmc.hdc, this.defFont)  ; impacting the reset of the cols in this row as well
                   }
-                  ; myGDI.SelectObject(Ldata.nmc.hdc, (this.MouseDown AND ColColor["HB"]) ? this.btnFont : this.defFont)
                } Else {
                   ; Color set for this col, but not highlighted
                   PutIfVal(ColColor["B"], ColColor["T"]) 
@@ -510,15 +507,7 @@ Class LV_Colors {
             }
             Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
             ; CDRF_NOTIFYPOSTPAINT to trigger a follow-on stage if needed
-         Case CDDS_SUBITEMPOSTPAINT:
-            ; can draw stuff if we select in DC
-            ; debug(Ldata.rcText.Right)
-            ; IDEA - maybe draw a border? Can we draw a rounded rectangle without wiping out the text?
-            ; https://www.reddit.com/r/AutoHotkey/comments/1h5rjdd/listview_with_some_borders_between_rows/
-            ; https://www.autohotkey.com/boards/viewtopic.php?style=10&f=82&t=135753
-            ; Could fill with nothing and use a rounded pen border, but filling it would probably overrite the text
-            ; https://github.com/XMCQCX/WinExeCommander/blob/main/Lib/LV_GridColor.ahk
-
+         Case CDDS_SUBITEMPOSTPAINT: ; Phase 4 - not currently needed for any post drawing stuff
             Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
          Default:
             ; debug(hex(DrawStage) ", Default Row=" Row ", Col=" Col)
@@ -531,31 +520,9 @@ Class LV_Colors {
        * @returns Nothing
        */
       PutIfVal(bgVal, fgVal) {
-         ; IDEA - rounded rectangle around text
-         ; https://claude.ai/chat/f3aee8a3-227d-430f-831a-7fe2a81f6877
-         ; Rather than set the clrTextBk background color, use GDI+ to draw a rounded rectangle filled with the color
-         If bgVal != "" {
-            If (0) {
-               Try {
-                  rr      := stRECT()
-                  rr.top  := Col
-                  rr.left := 0
-                  Res     := SendMessage(LVM_GETSUBITEMRECT, Row, rr, , this.hwnd)
-                  If (rr.right > 0) {
-                     region := myGDI.CreateRoundRectRgn(rr.left, rr.top, rr.right + 1, rr.bottom + 1, 10, 10)
-                     myGDI.SelectClipRgn(Ldata.nmc.hdc, region)
-                     brush := myGDI.CreateSolidBrush(0xFFFF0000)
-                     myGDI.FillRect(Ldata.nmc.hdc, rr, brush)
-                     myGDI.SelectClipRgn(Ldata.nmc.hdc, 0)
-                     myGDI.DeleteObject(region)
-                     myGDI.DeleteObject(brush)
-                  }
-               } Catch As err {
-                  elog(err)
-               }
-            }
+         If bgVal != ""
             Ldata.clrTextBk := bgVal
-         }
+         
          If fgVal != ""
             Ldata.clrText := fgVal
          Return

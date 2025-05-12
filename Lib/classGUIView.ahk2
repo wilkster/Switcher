@@ -83,7 +83,6 @@ Class clsTaskGUI {
 
    osVer      := osVersion() ;10 or 11
    guiMargin  := 18	;1 pixel outer border + this margin on all for inner sides
-   ;scale     := A_ScreenDPI / 96
    inTask     := 0
    usingMouse := 1
    lvObj      := 0

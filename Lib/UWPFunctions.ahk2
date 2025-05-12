@@ -141,17 +141,19 @@ Class UWP {
    Static AppName(hWnd) {
       ; https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-id
       Static PKEY_AppUserModel_ID := "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3} 5" ; AppID
-      ; one time cache
-      ; Get the AppID property directly, it is an ATOM so get the corresponding string
-      If (Prop := GetProp(hWnd, PKEY_AppUserModel_ID)) {
-         ; BUG - Files app is returning a 0 for AppID property
-         AUMID := GetGlobalAtomName(Prop)
-         Return (AUMID AND this.AppMap.Has(AUMID)) ? this.AppMap[AUMID].Name : WinGetProcessName(hWnd)
-      } Else If (WinExist(hWnd)) {
-         warning("Failed to return property for '" WinGetTitle(hWnd) "'")
-         Return WinGetProcessName(hWnd)
-      } Else {
-         Return ""
+      ; Get the AppID property directly, it is an ATOM so get the corresponding AppName string
+      Try {
+         If (Prop := GetProp(hWnd, PKEY_AppUserModel_ID)) {
+            AUMID := GetGlobalAtomName(Prop)
+            Return (AUMID AND this.AppMap.Has(AUMID)) ? this.AppMap[AUMID].Name : WinGetProcessName(hWnd)
+         } Else If (WinExist(hWnd)) {
+            warning("Failed to return property for '" WinGetTitle(hWnd) "'")
+            Return WinGetProcessName(hWnd)
+         } Else {
+            Return ""
+         }
+      } Catch Error As e {
+         eLog("Failed to get AppName")
       }
    }
 }

@@ -45,3 +45,12 @@ The computer will beep in three tones when one of the numeric keypads are used
 |Ctrl-<keypad #>|Assign the active window to be restored when pressing <keypad #>, you will here a low-high tone when assigned.|
 |Ctrl-Alt-<keypad #>|Unassign the window assigned to this keypad, you will here a high-low tone when unassigned|
 |<keypad #>|If previously assigned, makes assigned window active. If not assigned you will here a brief low tone.|
+
+## Tray Icon
+
+![image](https://github.com/user-attachments/assets/df27d75f-7a93-411c-b34b-07b6e837ed9e)
+
+The Switcher Tray Icon will always show the current desktop number (up to desktop 10). If you click the tray icon it will rotate to the next desktop with wrap-around.
+Only previously created desktops will be used.
+The Right Mouse button click on the tray icon brings up the standard Autohotkey options along with the ability to edit the settings file. Changes
+to settings will require resarting Switcher.

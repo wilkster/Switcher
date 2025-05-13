@@ -420,7 +420,8 @@ Class LV_Colors {
       Static CDIS_FOCUS            := 0x10
       ; Return codes from each stage
       Static CDRF_DODEFAULT         := 0x0
-      Static CDRF_SKIPDEFAULT       := 0x4
+      Static CDRF_SKIPDEFAULT       := 0x04
+      Static CDRF_NEWFONT           := 0x02
       Static CDRF_NOTIFYPOSTPAINT   := 0x10
       Static CDRF_NOTIFYITEMDRAW    := 0x20
       Static CDRF_NOTIFYSUBITEMDRAW := 0x20
@@ -505,7 +506,8 @@ Class LV_Colors {
                   myGDI.SelectObject(Ldata.nmc.hdc, this.defFont)  ; impacting the reset of the cols in this row as well
                }
             }
-            Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
+            Return CDRF_NEWFONT ; docs say return CDRF_NEWFONT if something changed
+            ; Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
             ; CDRF_NOTIFYPOSTPAINT to trigger a follow-on stage if needed
          Case CDDS_SUBITEMPOSTPAINT: ; Phase 4 - not currently needed for any post drawing stuff
             Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed

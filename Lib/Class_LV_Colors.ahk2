@@ -414,7 +414,7 @@ Class LV_Colors {
       ; Paint Stages
       Static CDDS_PREPAINT         := 0x01
       Static CDDS_ITEMPREPAINT     := 0x010001
-      Static CDDS_SUBITEMPREPAINT  := 0x030001
+      Static CDDS_SUBITEMPREPAINT  := 0x030001 ; CDDS_ITEMPREPAINT | CDDS_SUBITEM
       Static CDDS_SUBITEMPOSTPAINT := 0x030002
       ; Row has Focus
       Static CDIS_FOCUS            := 0x10
@@ -425,6 +425,8 @@ Class LV_Colors {
       Static CDRF_NOTIFYPOSTPAINT   := 0x10
       Static CDRF_NOTIFYITEMDRAW    := 0x20
       Static CDRF_NOTIFYSUBITEMDRAW := 0x20
+      Static LVM_GETSUBITEMRECT     := 0x1038 ; unicode
+      Static LVM_GETITEMTEXT        := 0x1073 ; unicode version
       
       If !(this.HWND) || (hLV.hWnd != this.HWND) {
          Return CDRF_DODEFAULT
@@ -495,6 +497,7 @@ Class LV_Colors {
                      } else {
                         myGDI.SelectObject(Ldata.nmc.hdc, this.selFont )
                      }
+
                   } else {
                      ; Regular font and hot track color for non mouse-down
                      PutIfVal(ColColor["HB"], ColColor["HT"]) 
@@ -506,9 +509,7 @@ Class LV_Colors {
                   myGDI.SelectObject(Ldata.nmc.hdc, this.defFont)  ; impacting the reset of the cols in this row as well
                }
             }
-            Return CDRF_NEWFONT ; docs say return CDRF_NEWFONT if something changed
-            ; Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
-            ; CDRF_NOTIFYPOSTPAINT to trigger a follow-on stage if needed
+            Return CDRF_DODEFAULT
          Case CDDS_SUBITEMPOSTPAINT: ; Phase 4 - not currently needed for any post drawing stuff
             Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
          Default:

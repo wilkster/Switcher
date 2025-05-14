@@ -369,6 +369,55 @@ Class myGDI {
    Static CreateFontIndirect(cFont) {
       return DllCall("Gdi32\CreateFontIndirect","Ptr", cFont.Ptr)
    }
+/*
+int DrawText(
+  [in]      HDC     hdc,
+  [in, out] LPCTSTR lpchText,
+  [in]      int     cchText,
+  [in, out] LPRECT  lprc,
+  [in]      UINT    format
+  /*
+ * DrawText() Format Flags
+   #define DT_TOP                      0x00000000
+   #define DT_LEFT                     0x00000000 o
+   #define DT_CENTER                   0x00000001 o
+   #define DT_RIGHT                    0x00000002 o
+   #define DT_VCENTER                  0x00000004 d
+   #define DT_BOTTOM                   0x00000008
+   #define DT_WORDBREAK                0x00000010 d off for measure
+   #define DT_SINGLELINE               0x00000020
+   #define DT_EXPANDTABS               0x00000040
+   #define DT_TABSTOP                  0x00000080
+   #define DT_NOCLIP                   0x00000100 d
+   #define DT_EXTERNALLEADING          0x00000200
+   #define DT_CALCRECT                 0x00000400 measure only
+   #define DT_NOPREFIX                 0x00000800 d
+   #define DT_INTERNAL                 0x00001000
+
+   #if(WINVER >= 0x0400)
+   #define DT_EDITCONTROL              0x00002000
+   #define DT_PATH_ELLIPSIS            0x00004000
+   #define DT_END_ELLIPSIS             0x00008000
+   #define DT_MODIFYSTRING             0x00010000
+   #define DT_RTLREADING               0x00020000
+   #define DT_WORD_ELLIPSIS            0x00040000
+   #if(WINVER >= 0x0500)
+   #define DT_NOFULLWIDTHCHARBREAK     0x00080000
+   #if(_WIN32_WINNT >= 0x0500)
+   #define DT_HIDEPREFIX               0x00100000
+   #define DT_PREFIXONLY               0x00200000
+*/
+   /**
+    * 
+    * @param {pointer} hDC DC to draw Text into
+    * @param {pointer} lpchText Text String to draw
+    * @param {pointer} lpRect Rectangle in DC to draw on
+    * @param {Integer} uFormat The method of formatting the text DT_* values
+    * @returns {Integer} Operation result 
+    */
+   Static DrawText(hDC, lpchText, lpRect, uFormat := 0) {
+      return DllCall("User32\DrawText", "ptr", hDC, "Str", lpchText, "int", -1, "ptr", lpRect, "uint", uFormat, "int")
+   }   
 }
 
 

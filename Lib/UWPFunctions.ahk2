@@ -153,8 +153,12 @@ Class UWP {
             Return ""
          }
       } Catch Error As e {
-         eLog("Failed to get AppName")
+         if (e.Message ~= "denied")
+            warning("Access denied for " hex(hWnd))
+         else
+            eLog(e, "Failed to get AppName:" A_LastError)
       }
+      Return ""
    }
 }
 dlog("Include File Loaded")

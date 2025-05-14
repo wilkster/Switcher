@@ -171,6 +171,42 @@ Class stNMLVCUSTOMDRAW extends baseStructure {
    rcText     : stRECT ; RECT that specifies the rectangle in which the text is to be drawn.
    uAlign     : U32
 }
+/*
+typedef struct tagLVITEMA {
+  UINT   mask;
+  int    iItem;
+  int    iSubItem;
+  UINT   state;
+  UINT   stateMask;
+  LPSTR  pszText;
+  int    cchTextMax;
+  int    iImage;
+  LPARAM lParam;
+  int    iIndent;
+  int    iGroupId;
+  UINT   cColumns;
+  PUINT  puColumns;
+  int    *piColFmt;
+  int    iGroup;
+} LVITEMA, *LPLVITEMA;
+*/
+Class stLVITEM extends baseStructure {
+  mask      : u32
+  iItem     : I32
+  iSubItem  : I32
+  state     : u32
+  stateMask : u32
+  pszText   : uPtr
+  cchTextMax: i32
+  iImage    : i32
+  lParam    : uptr
+  iIndent   : i32
+  iGroupId  : i32
+  cColumns  : u32
+  puColumns : uPtr
+  piColFmt  : uPtr
+  iGroup    : i32
+}
 ;----------------------------------------------------------------------
 ; RECT structure
 ;----------------------------------------------------------------------

@@ -71,7 +71,6 @@ Class transparentWindow {
 
    }
 }
-PingWindow(hWnd, TO := 5000) => SendMessage(0x00, 0, 0, , hWnd, , , , TO)
 PingAWindow(hWnd) {
    Static WM_EXITSIZEMOVE := 0x0232
    blockZero := A_TickCount
@@ -87,6 +86,19 @@ IsHungAppWindow(hWnd) => DllCall("User32.dll\IsHungAppWindow", "Ptr", hWnd, "Int
 HungWindowFromGhostWindow(hWnd) => DllCall("User32.dll\HungWindowFromGhostWindow", "Ptr", hWnd, "Ptr")
 ; A ghost window replaces a window that hasn't called Get or PeekMessage for 5 seconds, in other words a hung window. It displays a bitmap of the hung window's client area
 GhostWindowFromHungWindow(hWnd) => DllCall("User32.dll\GhostWindowFromHungWindow", "Ptr", hWnd, "Ptr")
+/**
+ * 
+ * @param hWnd window to check
+ * @param {Integer} timeOut 
+ * @returns {Integer}  0 = timedout, non-zero = succeed
+ * If the function succeeds, the return value is nonzero. SendMessageTimeout
+   does not provide information about individual windows timing out if
+   HWND_BROADCAST is used.
+ */
+PingWindow(hWnd, timeOut := 3000) {
+   res := SendMessageTimeout(hWnd, 0, 0, 0, 0x0003, timeOut, &lpdwResult := 0)
+   return res
+}
 
 
 SetWindowLong(hWnd,opCode, Value) => DllCall("SetWindowLong", "int", hwnd, "int", opCode, "int", Value)
@@ -212,6 +224,7 @@ GetLastActivePopup(hWnd) {
 GetWindow(hwnd, flag := 0x00000004) {
    Return DllCall("User32.dll\GetWindow", "Ptr", hwnd, "UInt", flag)
 }
+isWindowEnabled(hwnd) => DllCall("user32.dll\IsWindowEnabled", "Ptr", hwnd)
 GetTopWindow()                           => DllCall("GetTopWindow", "Ptr", DllCall("GetDesktopWindow", "Ptr"))
 GetWindowTextLength(hWnd)                => DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd)
 winHasTitle(hWnd)                        => (DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd) > 0)

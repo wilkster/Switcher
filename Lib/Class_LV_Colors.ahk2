@@ -189,6 +189,8 @@ Class LV_Colors {
       ;-- Extract values (UShort) and assign to output variables
       this.rowHeight := (Res >>> 16) / rcalc
    }
+   ;   - auto enable hottrack OnMessage if needed
+   
    ; ===================================================================================================================
    ; Row()           Sets background and/or text color for the specified row.
    ; Parameters:     Row         -  Row number
@@ -201,9 +203,6 @@ Class LV_Colors {
    ;                 HtBkColor   -  Optional, Hot Track background color when mouse is over this cell (while in a selection)
    ; Return Value:   True on success, otherwise false.
    ; ===================================================================================================================
-   /*
-      - auto enable hottrack OnMessage if needed
-   */
    ColColor(Col, BkColor := "", TxColor := "", HtTxColor := "", HtBkColor := "") {
       If !(this.HWND)
          Return false

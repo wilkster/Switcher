@@ -53,7 +53,11 @@ IniWrite(SETTINGS.ExplorerPath, SETTINGS.File, "Settings", "ExplorerPath")
 IniWrite(SETTINGS.CheckAll, SETTINGS.File, "Settings", "SwapToMinimized")
 
 A_TrayMenu.Add()
-; TODO - later addd/handle check items in menu
+; TODO - later add/handle check items in menu
+; - NumericKeyboard, Enable Numeric Keyboard Hotkeys
+; - ExplorerPath, Show full Explorer Paths
+; - SwapToMinimized, Allow Prior Window Swap to Minimized
+; - Add custom colors to INI file and read them in clsTaskGUI __new
 A_TrayMenu.Add("Edit Settings File", (*) => Run(SETTINGS.File))  ; Creates a new menu item.
 
 DllCall("SetThreadDpiAwarenessContext", "Ptr", -4, "Ptr")

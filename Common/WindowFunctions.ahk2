@@ -126,6 +126,14 @@ SwitchToThisWindow(hWnd, how := 1) => DllCall("User32.dll\SwitchToThisWindow", "
 SetForegroundWindow(hWnd) => DllCall("User32.dll\SetForegroundWindow", "Ptr", hWnd)
 BringWindowToTop(hWnd) => DllCall("User32.dll\BringWindowToTop", "Ptr", hWnd)
 
+/**
+ * Attempt to close a window and if necessary shut down the app. Do not use on child windows.
+ * @param hWnd Handle to window to close (top level)
+ * @param {Integer} force close, true by default
+ * @returns {Integer} true if sucessful
+ */
+EndTask(hWnd, force := 1) => DllCall("User32\EndTask", "Ptr", hWnd, "Int", 0, "Int", force, "Int")
+
 ; https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
 ShowWindow(hWnd, how) => DllCall("User32.dll\ShowWindow", "Ptr", hWnd, "UInt", how)
 ShowWinNoActivate(hWnd) => DllCall("User32.dll\ShowWindow", "Ptr", hWnd, "UInt", SW_SHOWNOACTIVATE)
@@ -243,6 +251,7 @@ GetWindowMinMax(hWnd) {
    Return state
 }
 IsTopLevelWindow(hWnd) => DllCall("User32.dll\IsTopLevelWindow","Ptr", hWnd) ; undocumented
+IsSnapped(hWnd) => DllCall("User32.dll\IsWindowArranged", "Ptr", hWnd) ; is 
 IsIconic(hWnd) => DllCall("User32.dll\IsIconic", "Ptr", hWnd)
 IsZoomed(hWnd) => DllCall("User32.dll\IsZoomed", "Ptr", hWnd)
 ;----------------------------------------------------------------------

@@ -129,7 +129,7 @@ Class clsTaskGUI {
    Static aWinPin := "📌"
 
    ; Unicode icons for various window states
-   Static aWinState := Array(" 🗕 ", " 🗗 ", " 🗖 ", "🗔", "📺") ; ‗ 🗕🗙═―
+   Static aWinState := Array(" 🗕 ", " 🗗 ", " 🗖 ", "🗔", "📺", "🖽") ; ‗ 🗕🗙═―
 
 
    custColSel_ResMax := -1
@@ -579,11 +579,14 @@ Class clsTaskGUI {
    ;----------------------------------------------------------------------------
    cacheExplorerPaths() {
       this.explorerPathCache.Clear()
+      now := A_TickCount
       For oWin in ComObject("Shell.Application").Windows {
          If (oWin.Name = "File Explorer") {
             this.explorerPathCache[oWin.HWND] := oWin.Document.Folder.Self.Path
          }
       }
+      if (A_TickCount - now > 500)
+         warning("Required " A_TickCount - now "ms to get explorer paths")
       oWin := ""
       Return this.explorerPathCache.Count
    }
@@ -774,18 +777,20 @@ Class clsTaskGUI {
                ; Minimize if not active, activate if minimized
                ; For MS Project, work on the parent windows only
                this.tskViewObj.IsParentOverride(&hWnd, &ownerWin)
-               If (monInfo.getWinState(hWnd) = monInfo.WIN_MIN) {
-                  If (rNum == 1)
-                     WinRestore(hWnd)
-                  Else
-                     ShowWinNoActivate(hWnd) ; BUG - this may put the window at bottom of Z-Order, should I use Get/Set windows placement?
-               } Else {
-                  ; If (isWinPinned(ownerWin))
-                  ;    WinSetAlwaysOnTop(0, ownerWin)
-                  MinWinNoActivate(hWnd)
-                  ; Window may minimize to tray so wait for taskview callback to update
-                  If ( NOT IsWindowVisible(ownerWin))
-                     Sleep(100)
+               ; 2025-05-27 Also restore if in "snapped" position (same as normal flag)
+               ; TODO - make a switch when we add a new state
+               Switch monInfo.getWinState(hWnd) {
+                  Case monInfo.WIN_MIN, monInfo.WIN_SNAP:
+                     If (rNum == 1)
+                        WinRestore(hWnd)
+                     Else
+                        ShowWinNoActivate(hWnd) ; BUG - this may put the window at bottom of Z-Order, should I use Get/Set windows placement?
+
+                  Default:
+                     MinWinNoActivate(hWnd)
+                     ; Window may minimize to tray so wait for taskview callback to update
+                     If ( NOT IsWindowVisible(ownerWin))
+                        Sleep(100)
                }
                Sleep(delay)  ; Allow the task watcher to update the task array
 
@@ -812,10 +817,12 @@ Class clsTaskGUI {
                   Case clsTaskGUI.aWinPin:
                      WinSetAlwaysOnTop(0, ownerWin)
                   Default:
-                     If (monInfo.getWinState(ownerWin) = monInfo.WIN_MIN)
-                        WinRestore(ownerWin)
-                     Else
-                        WinMoveTop(ownerWin)   ; some apps need this, won't trigger a callback
+                     Switch monInfo.getWinState(ownerWin) {
+                        Case monInfo.WIN_MIN, monInfo.WIN_SNAP:
+                           WinRestore(ownerWin)
+                        Default :
+                           WinMoveTop(ownerWin)   ; some apps need this, won't trigger a callback
+                     }
                      WinSetAlwaysOnTop(1, ownerWin)
                }
 
@@ -860,7 +867,7 @@ Class clsTaskGUI {
             case this.custColSel_ResMax :
                this.tskViewObj.IsParentOverride(&hWnd, &ownerWin)
                Switch monInfo.getWinState(hWnd) {
-                  Case monInfo.WIN_MIN:
+                  Case monInfo.WIN_MIN, monInfo.WIN_SNAP:
                      ShowWinNoActivate(hWnd) ; will restore to normal or max depending on last setplacement
                   Case monInfo.WIN_MAX:
                      MinWinNoActivate(hWnd,1)   ; restore to normal next
@@ -974,6 +981,10 @@ Class clsTaskGUI {
       State := monInfo.getWinState(targetWin)
       ; debug("State:" State ", Parent:" IsParent)
       Switch State {
+         Case monInfo.WIN_SNAP:
+            this.MenuIcon(rmb, getTitle(), "Restore", cbRmbHandler)
+            this.MenuIcon(rmb, getTitle(), "Minimize", cbRmbHandler)
+            this.MenuIcon(rmb, getTitle(), "Maximize", cbRmbHandler)
          Case monInfo.WIN_MIN:
             ; Minimized
             If (IsParent)
@@ -1137,10 +1148,12 @@ Class clsTaskGUI {
 
          Case "Pin":
             ; BUG - sometimes pinning doesn't work (OneNote)
-            If (monInfo.getWinState(ownerWin) = monInfo.WIN_MIN)
-               WinRestore(ownerWin)
-            Else
-               WinMoveTop(ownerWin)   ; some apps need this, won't tigger a callback
+            Switch monInfo.getWinState(ownerWin) {
+               Case monInfo.WIN_MIN :
+                  WinRestore(ownerWin)
+               Default :
+                  WinMoveTop(ownerWin)   ; some apps need this, won't tigger a callback
+            }
             WinSetAlwaysOnTop(1, ownerWin)
             ; NOTE - Switcher may be blanked here by other window
             Sleep(delay)  ; Allow the task watcher to update the task array
@@ -1291,11 +1304,7 @@ Class clsTaskGUI {
          ; debug("Ping " PingWindow(ownerWin))
          If (IsHungAppWindow(ownerWin)) {
             CloseMenu()
-            If (MsgBox("'" winTitle "' is hung and needs to be forcefully killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") {
-               forceKill(ownerWin)
-               Return true
-            }
-            Return false
+            Return (MsgBox("'" winTitle "' is hung and needs to be forcefully killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") ? EndTask(ownerWin) : false
          } Else If (!isWindowEnabled(targetWin)) {
             ; If window not enabled, probably has a modal dialog box open freezing it
             CloseMenu()
@@ -1305,25 +1314,23 @@ Class clsTaskGUI {
          } Else {
             now := A_TickCount
             Try {
-               /*
-               ; NOTE
-               ;   - This may fail/timeout if app only minimizes itself to tray or triggers a save dialog
-               ;   - This may flash the task list GUI (or bring it to a lower Z-Order), minimizing first helps
+               /**
+                 NOTE
+                   - This may fail/timeout if app only minimizes itself to tray or triggers a save dialog
+                   - This may flash the task list GUI (or bring it to a lower Z-Order), minimizing first helps
                */
                res := SendMessage(WM_SYSCOMMAND, SC_CLOSE, , , targetWin, , , , 500)
                ; Wait 100ms, and if window not gone it must by hung
                dlog("SendMessage wait period is " (A_TickCount - now) " ms for:" winTitle)
-               wp := 2.0 - (A_TickCount - now)   ; no timeout wait period
                If (!WaitForWinClose(targetWin, 0.1)) {
                   CloseMenu()
-                  If (MsgBox("'" winTitle "' is not responding, and needs to be forcibly killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") {
-                     forceKill(ownerWin)
-                     Return true
-                  }
+                  Return (MsgBox("'" winTitle "' is not responding, and needs to be forcibly killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") ? EndTask(ownerWin) : false
                }
+               ; Wait a max of 2 seconds for everything
+               wp := 2.0 - (A_TickCount - now)
                ; response = 0 if closed OK
             } Catch TimeoutError As e {
-               ; Most common for no response (say dialog was up), use a short timeout to check if closed
+               ; Most common for no response (say dialog was up to save contents), use a short timeout to check if closed
                Warning("TimeoutError SendMessage, time=" (A_TickCount - now) " ms for:" winTitle)
                wp := 0.5 ; timeout default, probably a dialog open so close quickly
             } Catch OSError As e {
@@ -1364,30 +1371,30 @@ Class clsTaskGUI {
             menuObj.Delete()
          ; this.closeGUI()
       }
-      /**
-       * Called if window doesn't responsed to normal close messages
-       * @param ownerWin Window to kill
-       */
-      forceKill(ownerWin) {
-         Try WinKill(ownerWin, 3.0)
-         ; If window still exists, then kill the process itself
-         If (!WaitForWinClose(ownerWin, 0.1)) {
-            Try {
-               ; Should we prompt the user here first?
-               dlog("WinKill Failed, killing process instead")
-               ; Will trigger catch if sucessfully killed above
-               pid := WinGetPID(ownerWin)
-               If ProcessClose(pid)
-                  dlog("ProcessClose worked for Process " pid)
-               Else
-                  warning("Failed to ProcessClose process " pid)
-            } Catch As e {
-               dlog("WinKill worked for process " pid)
-            }
-         } Else {
-            dlog("WinKill worked for " hex(ownerWin))
-         }
-      }
+      ; /**
+      ;  * Called if window doesn't responsed to normal close messages
+      ;  * @param ownerWin Window to kill
+      ;  */
+      ; forceKill(ownerWin) {
+      ;    Try WinKill(ownerWin, 3.0)
+      ;    ; If window still exists, then kill the process itself
+      ;    If (!WaitForWinClose(ownerWin, 0.1)) {
+      ;       Try {
+      ;          ; Should we prompt the user here first?
+      ;          dlog("WinKill Failed, killing process instead")
+      ;          ; Will trigger catch if sucessfully killed above
+      ;          pid := WinGetPID(ownerWin)
+      ;          If ProcessClose(pid)
+      ;             dlog("ProcessClose worked for Process " pid)
+      ;          Else
+      ;             warning("Failed to ProcessClose process " pid)
+      ;       } Catch As e {
+      ;          dlog("WinKill worked for process " pid)
+      ;       }
+      ;    } Else {
+      ;       dlog("WinKill worked for " hex(ownerWin))
+      ;    }
+      ; }
       ;
       ; Close the GUI and let the user handle the delayed close
       ;
@@ -1508,6 +1515,7 @@ Class clsTaskGUI {
       ex := WinGetExStyle(hWnd)
       ;state := WinGetMinMax(this.tskViewObj.getTLParent(hWnd)) ; -1 = minimized, 1 = maximized, 0 = normal
       pinned := ex & WS_EX_PINNED
+      isWinSnapped := isSnapped(hWnd)
       If (ex & WS_EX_MDICHILD) {
          isChild := 1
          state := IsIconic(hWnd) ? monInfo.WIN_MIN : IsZoomed(hWnd) ? monInfo.WIN_MAX : monInfo.WIN_NORMAL
@@ -1530,7 +1538,9 @@ Class clsTaskGUI {
                ; Chrome full screen will be 0B
             } Else If ((style & WS_CAP) = 0) {
                state := monInfo.WIN_CFS
-            }
+            } Else If (IsSnapped(hWnd)) {
+               state := monInfo.WIN_SNAP
+            } 
          }
       }
       ;style := WinGetStyle(hWnd)

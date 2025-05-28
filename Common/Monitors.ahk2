@@ -26,6 +26,7 @@ Class monInfo {
    Static WIN_MAX        := 1
    Static WIN_FS         := 2     ; My Forced Full Screen
    Static WIN_CFS        := 3    ; Chrome Full Screen
+   Static WIN_SNAP       := 4    ; Normal but snapped
    Static cbEnumMonitors := CallbackCreate(this.MonitorEnumProc.bind(this), "Fast", 4)
 
    Static __new() {
@@ -456,6 +457,8 @@ Class monInfo {
                ; Chrome full screen will be 0B
             } Else If ((WinGetStyle(hWnd) & WS_CAP) = 0) {
                state := this.WIN_CFS
+            } Else If (IsSnapped(hWnd)) {
+               state := monInfo.WIN_SNAP
             }
          }
       }

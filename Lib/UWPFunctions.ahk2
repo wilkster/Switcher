@@ -26,6 +26,7 @@ Class UWP {
       if (NOT DirExist(this.UWPIcons))
          DirCreate(this.UWPIcons) 
       now := A_TickCount
+      ; Iterating through this virtual apps folder is pretty slow (~500ms)
       For app in ComObject('Shell.Application').NameSpace('shell:AppsFolder').Items {
          ; Look for UWP Store Apps only, it taks ~500ms to iterate through all of the apps
          ; Non-store apps look like this: calibre->{6D809377-6AF0-444B-8957-A3773F02200E}\Calibre2\calibre.exe
@@ -37,7 +38,7 @@ Class UWP {
             this.AppMap[AUMID]  := {Name : app.Name, Manifest : appManifest, ID : AppID}
             ; FullName := app.ExtendedProperty("System.AppUserModel.PackageFullName") ; available but not used, same as the folder name in windowsapps
             ; Find an appropriate icon in the manifest if needed
-            this.__cacheUWPLogo(app.Path)
+            this.CacheUWPLogoIfNeeded(AUMID)
          }
       }
       ;----------------------------------------------------------------------
@@ -51,7 +52,7 @@ Class UWP {
             this.UPWFileMap[baseName] := A_LoopFileFullPath
          }
       }
-      dLog("Cached a total of " this.UPWFileMap.Count " UWP icons from " this.UWPIcons  " in " A_TickCount - now " msec")
+      dLog("Cached a total of " this.UPWFileMap.Count " UWP Icons from " this.UWPIcons  " in " A_TickCount - now " msec")
 
    }
    /**
@@ -69,7 +70,7 @@ Class UWP {
    ; typically derived from the app's name and publisher.
    ; ApplicationId: This is the identifier for the specific application within the package.
    ;----------------------------------------------------------------------
-   Static __cacheUWPLogo(AUMID) {
+   Static CacheUWPLogoIfNeeded(AUMID) {
 
       AppObj         := this.AppMap[AUMID]
       logoTargetLoc  := this.UWPIcons
@@ -78,16 +79,16 @@ Class UWP {
       If (FileExist(logoTargetLoc "\" AppObj.Name ".png") OR FileExist(logoTargetLoc "\" AppObj.Name ".ico"))
          Return 1
 
+      If (!FileExist(AppObj.Manifest)) {
+         warning("Could not find manifest: " AppObj.Manifest)
+         Return 0
+      }
       SplitPath(AppObj.Manifest, &ManifestName, &dirname, &ext, &base)
       Text := FileRead(AppObj.Manifest)
       ; Iterate through the desired icon sizes, smaller ones have less padding
-      For num in [44, 71, 150, 310, "SmallLogo", "Logo"] {
+      For token in [44, 71, 150, 310, "SmallLogo", "Logo"] {
          ; Look for logo after AppID
-         if (IsNumber(num))
-            reString := 'sU)Id="' AppObj.ID '".+Square' num 'x' num 'Logo="(.+)"'
-         else
-            reString := 'sU)Id="' AppObj.ID '".+' num '="(.+)"'
-
+         reString := IsNumber(token) ? 'sU)Id="' AppObj.ID '".+Square' token 'x' token 'Logo="(.+)"' : 'sU)Id="' AppObj.ID '".+' token '="(.+)"'
          if (pos := RegExMatch(Text, reString, &mArray)) {
             ; Will need to scan files using the match as a pattern
             SplitPath(mArray[1], , &dir, &ext, &base)
@@ -111,7 +112,7 @@ Class UWP {
                warning("Couldn't find icon using pattern " logoFileWC)
             Break
          } Else {
-            debug("Tried " num " in " AppObj.Manifest)
+            debug("Tried " token " in " AppObj.Manifest)
          }
       }
       ;----------------------------------------------------------------------

@@ -232,7 +232,7 @@ GetLastActivePopup(hWnd) {
 GetWindow(hwnd, flag := 0x00000004) {
    Return DllCall("User32.dll\GetWindow", "Ptr", hwnd, "UInt", flag)
 }
-isWindowEnabled(hwnd) => DllCall("user32.dll\IsWindowEnabled", "Ptr", hwnd)
+isWindowEnabled(hwnd)                    => DllCall("user32.dll\IsWindowEnabled", "Ptr", hwnd)
 GetTopWindow()                           => DllCall("GetTopWindow", "Ptr", DllCall("GetDesktopWindow", "Ptr"))
 GetWindowTextLength(hWnd)                => DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd)
 winHasTitle(hWnd)                        => (DllCall("User32.dll\GetWindowTextLengthW", "Ptr", hWnd) > 0)
@@ -328,11 +328,11 @@ RedrawWholeWindow(hWnd, Flags) => DllCall("RedrawWindow","Ptr", hWnd, "Ptr", 0, 
 ; Replace WaitWinClose (which doesn't work for UWP apps)
 ; NOTE - Good to wait before check so cleanup tasks don't find stray windows
 ;----------------------------------------------------------------------------
-WaitForWinClose(targetWin, Timeout) {
+WaitForWinClose(hWnd, Timeout) {
    to := A_TickCount + Integer(Timeout * 1000)
    ; For children, the window probably exists but hidden when closed
    Sleep(50)
-   While (IsWindowVisible(targetWin)) {
+   While (IsWindowVisible(hWnd)) {
       If (A_TickCount > to)
          Return false
       Sleep(20)

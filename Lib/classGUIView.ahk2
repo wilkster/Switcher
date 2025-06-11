@@ -1309,7 +1309,7 @@ Class clsTaskGUI {
          ; debug("Ping " PingWindow(ownerWin))
          If (IsHungAppWindow(ownerWin)) {
             CloseMenu()
-            Return (MsgBox("'" winTitle "' is hung and needs to be forcefully killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") ? EndTask(ownerWin) : false
+            Return (MsgBox("'" winTitle "' is hung and needs to be forcibly killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") ? EndTask(ownerWin) : false
          } Else If (!isWindowEnabled(targetWin)) {
             ; If window not enabled, probably has a modal dialog box open freezing it
             ; NOTEPAD would still be enabled but not have the WS_MAXIMAIXE flag set
@@ -1324,11 +1324,24 @@ Class clsTaskGUI {
                ogStyle := TitleBarState(targetWin)
                ; May return before of after window actually closes, so check later
                ; WM_QUIT  would tell the app to exit
+               /*
+               WM_CLOSE is more direct and commonly used when you want to
+               programmatically close a window, while SC_CLOSE is more
+               appropriate when you want to simulate the user selecting close
+               from the system menu.
+               */
                SendMessage(WM_SYSCOMMAND, SC_CLOSE, , , targetWin, , , , 500)
+               ; WinClose sends a WM_CLOSE message to the target window
+               ; This can be more brutal/direct, sometimes no timeout but window isn't really closed
+               ; It may bypass closing dialog on command prompt
+               If ((A_TickCount - now) <= 16 AND IsWindowVisible(targetWin)) {
+                  debug("Trying WinClose: " (A_TickCount - now))
+                  WinClose(targetWin, , 0.5)
+               }
                ; Didn't trigger an error
                ; Wait 3sec, and if window not gone it must by hung
                dlog("SC_CLOSE SendMessage wait period is " (A_TickCount - now) " ms for:" winTitle)
-               wp -= (A_TickCount - now)
+               wp -= (A_TickCount - now)/1000.0
                ; response = 0 if closed OK
             } Catch TimeoutError As e {
                ; SendMessage : Most common for no response (save dialog was up to save contents), use a short timeout to check if closed
@@ -1351,18 +1364,23 @@ Class clsTaskGUI {
             ;
             ; Wait for the window to actually close before proceeding
             ;
-            If (!WaitForWinClose(targetWin, wp)) {
+            If (!WaitForWinClose(targetWin, Max(0.1, wp))) {
                ; Still active, didn't close properly. Handle it
                CloseMenu()
                this.closeGUI()
                ; Is it due to a dialog that popped up in front when we tried to close it?
-               Try this.tskViewObj.windowToTop(ownerWin)
+               Try this.tskViewObj.windowToTop(ownerWin) ; NOTE - this can make a windows go away on windows 11
                ; disabled (win32) or Title bar controls changed (WinUI/UWP)
-               If (!isWindowEnabled(targetWin) OR ogStyle != TitleBarState(targetWin)) {
-                  MsgBox("'" winTitle "' Is disabled or may have a dialog box open, please close it first!", , "Icon! OK")
-                  Return false
+
+               If (IsWindowVisible(targetWin)) {
+                  If (!isWindowEnabled(targetWin) OR ogStyle != TitleBarState(targetWin)) {
+                     MsgBox("'" winTitle "' Is disabled or may have a dialog box open, please close it first!", , "Icon! OK")
+                     Return false
+                  } Else {
+                     Return (MsgBox("'" winTitle "' is not responding, it needs to be forcibly killed, Ok?", , "Icon! YesNo") = "Yes") ? EndTask(ownerWin) : false
+                  }
                } Else {
-                  Return (MsgBox("'" winTitle "' is not responding, it needs to be forcibly killed, Ok?", , "Icon! YesNo") = "Yes") ? EndTask(ownerWin) : false
+                  Return true
                }
             }
             dlog("Time to Close '" winTitle "' is " (A_TickCount - now) " ms")

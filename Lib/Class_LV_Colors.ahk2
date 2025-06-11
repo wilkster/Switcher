@@ -231,12 +231,13 @@ Class LV_Colors {
       ; These can be blank, in that case the row colors will be used
       ; B - regular background color
       ; T - regular text color
+      ; HT - Text color when mouse is over cell
       ; HB - Background when mouse is over cell
-      ; T - regular text color when mouse is over cell
+      ; PT - Text color when mouse is pressed on a cell
       ; PB - Background when mouse is pressed on a cell
       ; Slightly dim/brighten the cell background when pressed
       lumVal := GetRGB(HBxBGR, &B, &G, &R) ;
-      this.Cols[Col] := Map("B", BkBGR, "T", TxBGR, "HT", HTxBGR, "HB", HBxBGR, "PB", lumRGB(HBxBGR, lumVal > 128 ? -30 : 20)) ; this.SELB
+      this.Cols[Col] := Map("B", BkBGR, "T", TxBGR, "HT", HTxBGR, "HB", HBxBGR, "PT", HTxBGR, "PB", lumRGB(HBxBGR, lumVal > 128 ? -30 : 20)) ; this.SELB
       this.ColSet := true  ; indicate we have some custom columns
       Return true
    }
@@ -491,7 +492,7 @@ Class LV_Colors {
                      ; Button with active backbround OR
                      ; Non-button text, so adjust font differently
                      if (ColColor["HB"]) {
-                        PutIfVal(ColColor["PB"], ColColor["HT"]) 
+                        PutIfVal(ColColor["PB"], ColColor["PT"]) 
                         myGDI.SelectObject(Ldata.nmc.hdc, this.btnFont )
                      } else {
                         myGDI.SelectObject(Ldata.nmc.hdc, this.selFont )

@@ -96,9 +96,11 @@ GhostWindowFromHungWindow(hWnd) => DllCall("User32.dll\GhostWindowFromHungWindow
    HWND_BROADCAST is used.
  */
 PingWindow(hWnd, timeOut := 3000) {
+   ; SMTO_ABORTIFHUNG  | SMTO_BLOCK = 0x0003
    res := SendMessageTimeout(hWnd, 0, 0, 0, 0x0003, timeOut, &lpdwResult := 0)
    return res
 }
+
 
 
 SetWindowLong(hWnd,opCode, Value) => DllCall("SetWindowLong", "int", hwnd, "int", opCode, "int", Value)

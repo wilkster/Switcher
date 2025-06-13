@@ -1308,7 +1308,6 @@ Class clsTaskGUI {
          ; SendMessage(Msg , wParam, , , WinTitle, , , , Timeout])
          winTitle := WinGetTitle(targetWin)
          ; debug("State=" Hex(TitleBarState(targetWin)))
-         ; debug("Ping " PingWindow(ownerWin))
          If (IsHungAppWindow(ownerWin)) {
             CloseMenu()
             Return (MsgBox("'" winTitle "' is hung and needs to be forcibly killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") ? EndTask(ownerWin) : false

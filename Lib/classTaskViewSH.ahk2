@@ -421,6 +421,12 @@ Class clsTaskView {
             If (BringWindowToTop(hWnd) = 0)
                warning("taskClass - BringWindowToTop fail for '" title "', Error=" A_LastError)
          }
+
+         Try {
+            debug("Parent Active:" WinGetTitle("A"))
+         } Catch as E {
+            warning("Failed to get Active Window")
+         }
       } Else {
          ; This is a child, make sure the parent is visible first (and not minimized)
          ; For sibling switches the active will always be the parent
@@ -446,6 +452,12 @@ Class clsTaskView {
          */
          If (BringWindowToTop(hWnd) = 0)
             warning("taskClass - BringWindowToTop fail for '" title "', Error=" A_LastError)
+
+         Try {
+            debug("Child Active:" WinGetTitle("A"))
+         } Catch as E {
+            warning("Failed to get Active Window")
+         }
          /*
          SetForegroundWindow(hWnd) notes
          Brings the thread that created the specified window into the foreground and activates the window.

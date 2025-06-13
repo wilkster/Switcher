@@ -545,6 +545,7 @@ Class clsTaskGUI {
    ; Determine if this window is on the current, different or locked on all desktops
    ; So a different icon can be used
    ; Flag an alternate desktop as well ⓿
+   ; NOTE - I could just call GetRoot and not need the isChild parameter
    ;----------------------------------------------------------------------------
    DesktopText(&dtText, hWnd, cdVid, isChild) {
       ; Static dtNum := ["❶", "❷", "❸", "❹", "❺", "❻", "❼", "❽", "❾", "❿"]
@@ -552,7 +553,8 @@ Class clsTaskGUI {
       ; static dtNum := ["𝟭", "𝟮", "𝟯", "𝟰", "𝟱", "𝟲", "𝟳", "𝟴", "𝟵","➉"]
       ; For children, make sure we test the top level parent  ↪【1】 〖1〗 http://xahlee.info/comp/unicode_matching_brackets.html
       mdt := 0
-      hWnd := isChild ? GetRoot(hWnd) : hWnd     ;GetRootOwner
+      ;GA_ROOT stops at the toplevel which is used for MDI children
+      hWnd := isChild ? GetRoot(hWnd) : hWnd
       Switch vda.DtIsPinned(hWnd) {
          Case 0:
             vid := vda.DtID(hWnd)

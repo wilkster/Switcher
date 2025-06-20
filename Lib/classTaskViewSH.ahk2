@@ -423,7 +423,7 @@ Class clsTaskView {
          }
 
          Try {
-            debug("Parent Active:" WinGetTitle("A"))
+            dlog("Window Now Active:" WinGetTitle("A"))
          } Catch as E {
             warning("Failed to get Active Window")
          }
@@ -689,7 +689,7 @@ Class clsTaskView {
 
       Switch wParam {
          Case HSHELL_WINDOWACTIVATED, HSHELL_RUDEAPPACTIVATED, HSHELL_WINDOWCREATED:
-            ; OutputDebug("Checking " wParam " with window class " WinGetClass(lParam) ", pname " WinGetProcessName(lParam))
+            ; Try debug(msgMap[wParam] " with window class " WinGetClass(hWnd) ", pname " WinGetProcessName(hWnd))
 
             ; Ignore UWP Subhost events, they are not valid GUIs and will time out
             ; They are also created/destroyed when switching desktops
@@ -913,11 +913,11 @@ isValidShellHookCandidate(hWnd, skipDetail := false) {
       ; Order check is important, can't just blindly mask bits
       StyleOk := !(st & WS_VISIBLE) ? false
          : (es & WS_EX_NOACTIVATE) ? false
-            : (st & WS_DISABLED) ? false
+            ; : (st & WS_DISABLED) ? false   ; => If modal dialog is open disabling window
             : (es & WS_EX_APPWINDOW) ? true
             : (es & WS_EX_TOOLWINDOW) ? false
             : true
-      ; debug(hex(hWnd) " " StyleOk " " GetParent(hWnd) " " NotCloaked(hWnd))
+      ; debug(WinGetClass(hWnd) " " hex(st & WS_VISIBLE) " " hex(es & WS_EX_NOACTIVATE) " " hex(st & WS_DISABLED) " " hex(es & WS_EX_APPWINDOW) " " hex(es & WS_EX_TOOLWINDOW))
       res := (
          StyleOk	; Exclude ones with styles indicating not a valid toplevel
          AND DontIgnore(hWnd)	; MDI Clients, desktop, start menu related (search), Host UWP on other desktops

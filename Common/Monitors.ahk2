@@ -247,7 +247,6 @@ Class monInfo {
    Static IsWindowOnConnectedMonitor(ownerWin) {
       hNearMonitor := this.MonitorNearWindow(ownerWin)
       pmInfo := dxva2.getPhysMonitorsInfo(hNearMonitor)  ; 0,1,2...
-      debug(pmInfo.pHandle)
       If (pmInfo.pHandle >= 0) {
          InSource := dxva2.getMonitorInputSource(pmInfo.pHandle)
          dxva2.DestroyPhysicalMonitors(pmInfo)

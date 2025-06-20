@@ -152,7 +152,9 @@ class vda {
    static DtID(hWnd) {
       try {
          dt := DllCall(this.hVDWindow, "Ptr", hWnd, "Int")
-         return dt >= 0 ? dt : 0
+         if (dt < 0)
+            warning("Invalid Desktop returned for : " WinGetTitle(hWnd))
+         Return Min(0, dt)
       } catch as err {
          elog(err)
          return -1

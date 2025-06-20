@@ -97,8 +97,7 @@ dlog("Global Objects Created")
 ;----------------------------------------------------------------------
 ExitHandler(ExitReason, ExitCode) {
    Global SETTINGS
-   desktopTracker.__delete()
-   desktopTracker.__delete()
+   ; desktopTracker.__delete()
    guiObject.__delete()
    keyPadAssigner.__delete()
    taskObject.__delete()

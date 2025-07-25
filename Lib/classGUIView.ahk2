@@ -564,6 +564,8 @@ Class clsTaskGUI {
                dtText := "↪↪", mdt++
             Else If (vid > cdVid)
                dtText := "↪" dtNum[vid + 1], mdt++	; desktop to the right
+            Else If (vid < 0)
+               dtText := "!E" ; error case
             Else
                dtText := dtNum[vid + 1] "↩", mdt++ 	; desktop to the left
          Case 1:	; Locked on all desktops

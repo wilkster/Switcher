@@ -148,16 +148,17 @@ class vda {
       }
    }
    ; Get ID of some desktop that window is on
-   ; BUG - what is returned for an invalid desktop 0?
    static DtID(hWnd) {
       try {
-         dt := DllCall(this.hVDWindow, "Ptr", hWnd, "Int")
-         if (dt < 0)
+         If (dt := DllCall(this.hVDWindow, "Ptr", hWnd, "Int") < 0) {
             warning("Invalid Desktop returned for : " WinGetTitle(hWnd))
-         Return Min(0, dt)
+            Return vda.DtCurrent
+         } Else {
+            Return dt
+         }
       } catch as err {
          elog(err)
-         return -1
+         Return vda.DtCurrent
       }
    }
    ; Is window pinned/locked across all desktops

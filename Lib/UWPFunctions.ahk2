@@ -137,9 +137,10 @@ Class UWP {
    /**
     * Return the Common Name for some UWP app from the window handle
     * @param hWnd Handle of UWP app to get info on
-    * @returns {String} UWP Short App Name
+    * @param exeCheck default true, if it fails to find the appname the exe file name is returned
+    * @returns {String} UWP Short App Name or potentially the exe name
     */
-   Static AppName(hWnd) {
+   Static AppName(hWnd, exeCheck := true) {
       ; https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-id
       Static PKEY_AppUserModel_ID := "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3} 5" ; AppID
       ; Get the AppID property directly, it is an ATOM so get the corresponding AppName string
@@ -147,7 +148,7 @@ Class UWP {
          If (Prop := GetProp(hWnd, PKEY_AppUserModel_ID)) {
             AUMID := GetGlobalAtomName(Prop)
             Return (AUMID AND this.AppMap.Has(AUMID)) ? this.AppMap[AUMID].Name : WinGetProcessName(hWnd)
-         } Else If (WinExist(hWnd)) {
+         } Else If (exeCheck AND WinExist(hWnd)) {
             warning("Failed to return property for '" WinGetTitle(hWnd) "'")
             Return WinGetProcessName(hWnd)
          } Else {

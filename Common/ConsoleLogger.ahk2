@@ -1,0 +1,266 @@
+; AutoHotkey v2.0 - Console-like GUI Logger
+; Creates a scrolling text window that mimics console output
+
+Class ConsoleGUI {
+   __New(title := "Console Output", width := 800, height := 600) {
+      ; Create the main GUI
+      this.gui := Gui("+Resize", title)
+      this.gui.BackColor := "Black"
+
+      ; Create the edit control for console output
+      this.console := this.gui.Add("Edit",
+         "x10 y10 w" . (width - 40) . " h" . (height - 80) .
+         " ReadOnly VScroll Background000000 c0xFF00 " .
+         "-Wrap +WantReturn", "")
+
+      ; Set console font to monospace
+      this.console.SetFont("s10", "Consolas")
+
+      ; Create input field
+      ; TODO auto-align to bottom of last field
+      this.input := this.gui.Add("Edit",
+         "x10 y" . (height - 60) . " w" . (width - 120) . " h25 " .
+         "Background111111 cWhite", "")
+      this.input.SetFont("s10", "Consolas")
+
+      ; Create send button
+      this.sendBtn := this.gui.Add("Button",
+         "x" . (width - 100) . " y" . (height - 60) . " w80 h25", "Send")
+
+      ; Create clear button
+      this.clearBtn := this.gui.Add("Button",
+         "x" . (width - 100) . " y" . (height - 30) . " w80 h25", "Clear")
+
+      ; Set up event handlers
+      this.gui.OnEvent("Size", (*) => this.OnResize())
+      this.gui.OnEvent("Close", (*) => this.OnClose())
+      this.sendBtn.OnEvent("Click", (*) => this.SendInput())
+      this.clearBtn.OnEvent("Click", (*) => this.Clear())
+      this.input.OnEvent("Change", (*) => this.OnInputChange())
+
+      ; Store original dimensions for resizing
+      this.originalWidth := width
+      this.originalHeight := height
+
+      ; Buffer for console text
+      this.buffer := ""
+      this.maxLines := 1000  ; Maximum lines to keep in buffer
+
+      this.Show()
+   }
+
+   ; Show the GUI
+   Show() {
+      this.gui.Show("AutoSize")
+      this.input.Focus()
+   }
+
+   ; Hide the GUI
+   Hide() {
+      this.gui.Hide()
+   }
+
+   ; Add text to console (main logging function)
+   Log(text, newline := true) {
+      timestamp := FormatTime(, "yyyy-MM-dd HH:mm:ss")
+      line := "[" . timestamp . "] " . text . (newline ? "`r`n" : "")
+
+      ; Add to buffer
+      this.buffer .= line
+
+      ; Trim buffer if too long
+      this.TrimBuffer()
+
+      ; Update display
+      this.UpdateDisplay()
+   }
+
+   ; Add text without timestamp
+   LogRaw(text, newline := true) {
+      line := text . (newline ? "`r`n" : "")
+      this.buffer .= line
+      this.TrimBuffer()
+      this.UpdateDisplay()
+   }
+
+   ; Log with different colors/styles (simulated with prefixes)
+   LogInfo(text) {
+      this.Log("[INFO] " . text)
+   }
+
+   LogWarning(text) {
+      this.Log("[WARN] " . text)
+   }
+
+   LogError(text) {
+      this.Log("[ERROR] " . text)
+   }
+
+   LogSuccess(text) {
+      this.Log("[OK] " . text)
+   }
+
+   ; Clear the console
+   Clear() {
+      this.buffer := ""
+      this.console.Text := ""
+   }
+
+   ; Trim buffer to prevent memory issues
+   TrimBuffer() {
+      lines := StrSplit(this.buffer, "`r`n")
+      If (lines.Length > this.maxLines) {
+         ; Keep only the last maxLines
+         lines := lines.Slice(-this.maxLines)
+         this.buffer := ""
+         For line in lines {
+            this.buffer .= line . "`r`n"
+         }
+      }
+   }
+
+   ; Update the display
+   UpdateDisplay() {
+      this.console.Text := this.buffer
+      ; Auto-scroll to bottom
+      this.ScrollToBottom()
+   }
+
+   ; Scroll to bottom of console
+   ScrollToBottom() {
+      ; Move cursor to end and scroll into view
+      textLength := StrLen(this.console.Text)
+      SendMessage(0x00B1, textLength, textLength, this.console.hwnd)  ; EM_SETSEL
+      SendMessage(0x00B7, 0, 0, this.console.hwnd)  ; EM_SCROLLCARET
+   }
+
+   ; Handle input from the input field
+   SendInput() {
+      inputText := this.input.Text
+      If (inputText != "") {
+         this.Log("> " . inputText)
+         this.input.Text := ""
+
+         ; You can add command processing here
+         this.ProcessCommand(inputText)
+      }
+   }
+
+   ; Process commands entered in input field
+   ProcessCommand(cmd) {
+      cmd := Trim(cmd)
+
+      ; Built-in commands
+      Switch cmd {
+         Case "clear":
+            this.Clear()
+         Case "help":
+            this.LogInfo("Available commands:")
+            this.LogRaw("  clear - Clear the console")
+            this.LogRaw("  help  - Show this help")
+            this.LogRaw("  test  - Run test output")
+         Case "test":
+            this.RunTest()
+         default:
+            this.LogWarning("Unknown command: " . cmd)
+      }
+   }
+
+   ; Run test output
+   RunTest() {
+      this.LogInfo("Running test sequence...")
+
+      Loop 5 {
+         Sleep(500)
+         this.LogInfo("Test message " . A_Index)
+      }
+
+      this.LogWarning("This is a warning message")
+      this.LogError("This is an error message")
+      this.LogSuccess("Test completed successfully!")
+   }
+
+   ; Handle Enter key in input field
+   OnInputChange() {
+      ; Check if Enter was pressed (this is a workaround for v2.0)
+      If (GetKeyState("Enter", "P")) {
+         this.SendInput()
+      }
+   }
+
+   ; Handle GUI resize
+   OnResize() {
+      ; Get new dimensions
+      this.gui.GetPos(, , &newWidth, &newHeight)
+
+      ; Resize console
+      this.console.Move(, , newWidth - 40, newHeight - 80)
+
+      ; Move input and buttons
+      this.input.Move(, newHeight - 60, newWidth - 120)
+      this.sendBtn.Move(newWidth - 100, newHeight - 60)
+      this.clearBtn.Move(newWidth - 100, newHeight - 30)
+   }
+
+   ; Handle GUI close
+   OnClose() {
+      ExitApp()
+   }
+
+   ; Destructor
+   __Delete() {
+      If (this.gui) {
+         this.gui.Destroy()
+      }
+   }
+}
+
+; Example usage and demo
+Main() {
+   ; Create console GUI
+   console := ConsoleGUI("My Console Logger", 900, 700)
+
+   ; Demo logging
+   console.LogInfo("Console logger initialized")
+   console.LogInfo("Type 'help' for available commands")
+   console.LogRaw("=" . StrReplace(Format("{:50s}", ""), " ", "="))
+
+   ; Simulate some application output
+   ; SetTimer(() => {
+   ;     static counter := 0
+   ;     counter++
+
+   ;     switch Mod(counter, 4) {
+   ;         case 0:
+   ;             console.LogInfo("Periodic status update #" . counter)
+   ;         case 1:
+   ;             console.LogSuccess("Operation completed successfully")
+   ;         case 2:
+   ;             console.LogWarning("Low memory warning")
+   ;         case 3:
+   ;             console.LogError("Connection timeout")
+   ;     }
+
+   ;     ; Stop after 20 messages
+   ;     if (counter >= 20) {
+   ;         SetTimer(, 0)
+   ;     }
+   ; }, 2000)
+
+   ; Keep the script running
+   Return console
+}
+
+; Run the demo
+myConsole := Main()
+
+; Hotkeys for testing
+F1::myConsole.LogInfo("F1 pressed - Info message")
+F2::myConsole.LogWarning("F2 pressed - Warning message")
+F3::myConsole.LogError("F3 pressed - Error message")
+F4::myConsole.Clear()
+
+; You can also log from anywhere in your script like this:
+; myConsole.Log("Your message here")
+; myConsole.LogInfo("Info message")
+; myConsole.LogError("Error message")

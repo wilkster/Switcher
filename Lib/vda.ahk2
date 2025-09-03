@@ -321,7 +321,7 @@ class vda {
          ;  <->
          ;----------------------------------------------------------------------------
 
-         VirtualDesktopIDs := RegRead("HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops", "VirtualDesktopIDs")
+         VirtualDesktopIDs := RegRead("HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops", "VirtualDesktopIDs","")
          ; Loop over each desktop
          loop StrLen(VirtualDesktopIDs) / IdLength {
             ;        AB7A9AAB8513D346907E AF048FA8AC9A C4E09BD1B9E18F4FA949 C53B0E6CC22F D954DC650CC104439A25 8B6C97748963

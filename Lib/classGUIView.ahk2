@@ -508,7 +508,7 @@ Class clsTaskGUI {
    WindowsNotMonitor() {
       tArray := Array()
       For hWnd in this.tskViewObj.Contents {
-         If ((monInfo.MonitorNearWindow(hWnd) != monInfo.activeMonitor) OR (vda.DtCurrent != vda.DtID(hWnd))) {
+         If ((monInfo.MonitorNearWindow(hWnd) != monInfo.activeMonitor) OR (NOT vda.DtOnCurrent(hWnd))) {
             tArray.Push(hWnd)
          }
       }
@@ -1040,7 +1040,7 @@ Class clsTaskGUI {
       ;Multi Desktops or Multi Monitors enabled
       If (IsParent and !vda.DtIsPinned(ownerWin) and (monInfo.MonCount > 1 OR vda.DtCount > 1)) {
          ; Only show option if window not on current window/desktop
-         If ((vda.DtID(ownerWin) != vda.DtCurrent) or (monInfo.MonitorNearWindow(ownerWin) != monInfo.activeMonitor)) {
+         If (NOT vda.DtOnCurrent(ownerWin) or (monInfo.MonitorNearWindow(ownerWin) != monInfo.activeMonitor)) {
             rmb.Add()
             this.MenuIcon(rmb, tit, "Move Here", cbRmbHandler)
          }

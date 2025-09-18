@@ -46,11 +46,13 @@ SETTINGS.File          := SETTINGS.Path . "\Switcher.ini"
 SETTINGS.NumericKeypad := IniRead(SETTINGS.File,"Settings","NumericKeyboard",true)
 SETTINGS.ExplorerPath  := IniRead(SETTINGS.File,"Settings","ExplorerPath",true)
 SETTINGS.CheckAll      := IniRead(SETTINGS.File,"Settings","SwapToMinimized",false)
+SETTINGS.ShowDefault   := IniRead(SETTINGS.File,"Settings","ShowDefault",false) ; Enable to show icons for current monitor/desktop for windows on active monitor/deskop, by default they are blank
 If !FileExist(SETTINGS.Path)
    DirCreate(SETTINGS.Path)
 IniWrite(SETTINGS.NumericKeypad, SETTINGS.File, "Settings", "NumericKeyboard")
 IniWrite(SETTINGS.ExplorerPath, SETTINGS.File, "Settings", "ExplorerPath")
 IniWrite(SETTINGS.CheckAll, SETTINGS.File, "Settings", "SwapToMinimized")
+IniWrite(SETTINGS.ShowDefault, SETTINGS.File, "Settings", "ShowDefault")
 
 A_TrayMenu.Add()
 ; TODO - later add/handle check items in menu

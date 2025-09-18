@@ -86,7 +86,7 @@ class clsDesktopMonitor {
       Switch lParam {
          Case 0x202:   ; user left-clicked tray icon
             nxt := GetKeyState("Ctrl") ? -1 : 1
-            vda.DtGoTo(mod((vda.DtCurrent+nxt), vda.DtCount))
+            vda.DtCurrent := Mod((vda.DtCurrent + nxt), vda.DtCount)
             this.changeDesktopIcon(1)
          Case 0x203:   ; user double left-clicked tray icon
          Case 0x204:   ; user right-clicked tray icon

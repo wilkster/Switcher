@@ -51,6 +51,12 @@ class vda {
             this.hvRestart     := GetProcAddress(this.hVDA, "RestartVirtualDesktopAccessor")
             this.hvRegHookProc := GetProcAddress(this.hVDA, "RegisterPostMessageHook")
             this.UnRegHookProc := GetProcAddress(this.hVDA, "UnregisterPostMessageHook")
+            try {
+               this.GetDesktopNameProc := GetProcAddress(this.hVDA, "GetDesktopName")
+            } Catch {
+               this.GetDesktopNameProc := 0
+            }
+
 
             MsgNum := DllCall("RegisterWindowMessage", "Str", "TaskbarCreated")
             dLog("TaskbarCreated Message=" hex(MsgNum))
@@ -162,50 +168,11 @@ class vda {
          Return vda.DtCurrent
       }
    }
-   ; Is window pinned/locked across all desktops
-   static DtIsPinned(hWnd) {
-      try {
-         return DllCall(this.hVIsPinned, "Ptr", hWnd, "Int")
-      } catch as err {
-         elog(err)
-         return -1
-      }
-   }
-   ; Pin window on all desktops
-   static DtPinWin(hWnd) {
-      try {
-         return DllCall(this.hVPinWin, "Ptr", hWnd, "Uint")
-      } catch as err {
-         elog(err)
-         return 0
-      }
-   }
-   ; UnPin on all desktops
-   static DtUnPinWin(hWnd) {
-      try {
-         return DllCall(this.hVUnPinWin, "Ptr", hWnd, "Uint")
-      } catch as err {
-         elog(err)
-         return 0
-      }
-   }
-   ; Move to some desktop
+
+   ; Move window to some desktop
    static DtMoveDt(hWnd, dtNum) {
       try {
          return DllCall(this.hVMoveDesktop, "Ptr", hWnd, "Uint", dtNum, "Int")
-      } catch as err {
-         elog(err)
-         return 0
-      }
-   }
-   ; Go to some specific 0 based desktop, return of 0 is success
-   static DtGoTo(num) {
-      try {
-      ; TODO : WinActivate taskbar before switching and WinMinimize taskbar after arriving
-         ; Try WinActivate("ahk_group TaskBar")
-         res := DllCall(this.hvGoToDT, "Uint", num, "Int")
-         ; Try WinMinimize("ahk_group TaskBar")
-         return res
       } catch as err {
          elog(err)
          return 0
@@ -220,62 +187,82 @@ class vda {
          return 1
       }
    }
-   static DtNext(wrap := 0) {
-      tdt := DllCall(this.hvDtCount, "Ptr", 0, "Uint") - 1
-      cdt := DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
-      if (cdt < tdt) {
-         return cdt + 1
-      } else {
-         if (wrap) {
-            return 0
-         } else {
-            return -1
-         }
-      }
-   }
+
    ; Go to the next desktop (0 based)
    static DtNextDesktop(wrap := 0) {
-      tdt := DllCall(this.hvDtCount, "Ptr", 0, "Uint") - 1
-      cdt := DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
-      if (cdt < tdt) {
-         this.DtGoTo(cdt + 1)
-      } else {
-         if (wrap) {
-            this.DtGoTo(0)
-         } else {
-            SoundBeep(400),debug("Failed for DtNextDesktop")
-         }
-      }
+      if wrap
+         vda.DtCurrent := Mod((vda.DtCurrent + 1), vda.DtCount)
+      else
+         vda.DtCurrent := Max((vda.DtCurrent + 1), vda.DtCount)
+      ; tdt := DllCall(this.hvDtCount, "Ptr", 0, "Uint") - 1
+      ; cdt := DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
+      ; if (cdt < tdt) {
+      ;    this.DtCurrent := cdt + 1
+      ; } else {
+      ;    if (wrap) {
+      ;       this.DtCurrent := 0
+      ;    } else {
+      ;       SoundBeep(400),debug("Failed for DtNextDesktop")
+      ;    }
+      ; }
    }
    ;
    ; Go to the previous desktop (0 based)
-   ;
+   ; vda.DtCurrent := Mod((vda.DtCurrent + nxt), vda.DtCount)
    static DtPrevDesktop(wrap := 0) {
-      cdt := DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
-      if (cdt > 0) {
-         this.DtGoTo(cdt-1)
-      } else {
-         if (wrap) {
-            tdt := DllCall(this.hvDtCount, "Ptr", 0, "Uint") - 1
-            this.DtGoTo(tdt)
-         } else {
-            SoundBeep(400),debug("Failed for DtPrevDesktop")
-         }
-      }
+      if wrap
+         vda.DtCurrent := Mod((vda.DtCurrent - 1), vda.DtCount)
+      else
+         vda.DtCurrent := Min((vda.DtCurrent - 1), 0)
+
+
+      ; cdt := DllCall(this.hVDCurrent, "Ptr", 0, "Uint")
+      ; if (cdt > 0) {
+      ;    this.DtCurrent := cdt-1
+      ; } else {
+      ;    if (wrap) {
+      ;       tdt := DllCall(this.hvDtCount, "Ptr", 0, "Uint") - 1
+      ;       this.DtCurrent := tdt
+      ;    } else {
+      ;       SoundBeep(400),debug("Failed for DtPrevDesktop")
+      ;    }
+      ; }
    }
    ; Properties
+   Static Locked[hWnd] {
+      get {
+         return DllCall(this.hVIsPinned, "Ptr", hWnd, "Int")
+      }
+      set {
+         If Value {
+            return DllCall(this.hVPinWin, "Ptr", hWnd, "Uint")
+         } Else {
+            return DllCall(this.hVUnPinWin, "Ptr", hWnd, "Uint")
+            
+         }
+      }
+   }   
+   ; Return name of the numbered desktop
    static DtName[dtNum] {
       get {
-         try {
-            return this.dtNames[dtNum]
-         } catch as err {
-            this.dtNames := this.deskTopNames
-            try {
-               return this.dtNames[dtNum]
-            } catch as err {
-               elog(err)
+         If (this.GetDesktopNameProc) {
+            ; Windows 11 only
+            utf8_buf := Buffer(1024, 0)
+            ran := DllCall(this.GetDesktopNameProc, "Int", dtNum, "Ptr", utf8_buf, "Ptr", utf8_buf.Size, "Int")
+            Return StrGet(utf8_buf, 1024, "UTF-8")
+         } Else {
+            ; Windows 10 is missing the API
+            Try {
+               Return this.dtNames[dtNum]
+            } Catch As err {
+               this.dtNames := this.deskTopNames
+               Try {
+                  Return this.dtNames[dtNum]
+               } Catch As err {
+                  elog(err)
+               }
+               Return "Unknown Name for " dtNum
             }
-            return "Unknown Name for " dtNum
          }
       }
    }
@@ -301,10 +288,16 @@ class vda {
             return 0
          }
       }
+      set {
+         if (value >= 0 AND value < this.DtCount)
+            Return DllCall(this.hvGoToDT, "Uint", value, "Int")
+         else
+            Return 0
+      }
    }
    ;----------------------------------------------------------------------------
    ; Return an ordered list of desktop names (including custom names)
-   ; There doesn't seem to be a way to get this through an API
+   ; There doesn't seem to be a way to get this through an API in windows 10
    ;----------------------------------------------------------------------------
    static deskTopNames {
       get {
@@ -361,14 +354,6 @@ class vda {
          vda.DtMoveDt(ownerWin, cmon)
       }
       Return how
-   }
-   ; Windows 11 only
-   Static GetDesktopName(num) {
-      Static GetDesktopNameProc := GetProcAddress(this.hVDA, "GetDesktopName")
-      Static utf8_buffer        := Buffer(1024, 0)
-             ran                := DllCall(GetDesktopNameProc, "Int", num, "Ptr", utf8_buffer, "Ptr", utf8_buffer.Size, "Int")
-             name               := StrGet(utf8_buffer, 1024, "UTF-8")
-      Return name
    }
 }
 dlog("Include File Loaded")

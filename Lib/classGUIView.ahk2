@@ -102,8 +102,8 @@ Class clsTaskGUI {
    minTitLenPattern := "{:-70}"
    lastLVIndex      := 0
    guiTransparency  := 250
-   showDef          := 0   ; set to 1 to show icons for current desktop/monitor
    Gui              := 0
+   showDef          := SETTINGS.ShowDefault   ; set to 1 to show icons for current desktop/monitor
    ; Icons are for the RMB menu
    ImageListID := 0
    explorerPathCache := Map()
@@ -555,7 +555,7 @@ Class clsTaskGUI {
       mdt := 0
       ;GA_ROOT stops at the toplevel which is used for MDI children
       hWnd := isChild ? GetRoot(hWnd) : hWnd
-      Switch vda.DtIsPinned(hWnd) {
+      Switch vda.Locked[hWnd] {
          Case 0:
             vid := vda.DtID(hWnd)
             If (vid = cdVid)
@@ -563,11 +563,11 @@ Class clsTaskGUI {
             Else If (vid > 9)
                dtText := "↪↪", mdt++
             Else If (vid > cdVid)
-               dtText := "↪" dtNum[vid + 1], mdt++	; desktop to the right
+               dtText := "↪" dtNum[vid + 1], mdt++	; desktop to the right ↪
             Else If (vid < 0)
                dtText := "!E" ; error case
             Else
-               dtText := dtNum[vid + 1] "↩", mdt++ 	; desktop to the left
+               dtText := dtNum[vid + 1] "↩", mdt++ 	; desktop to the left ↩
          Case 1:	; Locked on all desktops
             dtText := "🔒Ⓐ", mdt++
          Default:
@@ -838,12 +838,13 @@ Class clsTaskGUI {
                Sleep(100)  ; Allow the task watcher to update the task array
 
             Case this.indexDT:
-               ; Move this this desktop here or adjacent desktop
-               If (vda.DtIsPinned(ownerWin))
-                  vda.DtUnPinWin(ownerWin)
+               ; Clicked the desktop
+               ; Move this desktop here or adjacent desktop
+               If (vda.Locked[ownerWin])
+                  vda.Locked[ownerWin] := false
                Else If ( NOT vda.MoveWinToThisDesktop(ownerWin)) {
                   ; Move to next desktop with wrap
-                  ndt := vda.DtNext(1)
+                  ndt := Mod((vda.DtCurrent + 1), vda.DtCount)
                   If (ndt >= 0) {
                      vda.DtMoveDt(ownerWin, ndt)
                   }
@@ -1038,7 +1039,7 @@ Class clsTaskGUI {
          Default:
       }
       ;Multi Desktops or Multi Monitors enabled
-      If (IsParent and !vda.DtIsPinned(ownerWin) and (monInfo.MonCount > 1 OR vda.DtCount > 1)) {
+      If (IsParent and !vda.Locked[ownerWin] and (monInfo.MonCount > 1 OR vda.DtCount > 1)) {
          ; Only show option if window not on current window/desktop
          If (NOT vda.DtOnCurrent(ownerWin) or (monInfo.MonitorNearWindow(ownerWin) != monInfo.activeMonitor)) {
             rmb.Add()
@@ -1056,7 +1057,7 @@ Class clsTaskGUI {
       If (IsParent and vda.DtCount > 0) {
          rmb.Add()
          ; Pin or Unpin to desktops
-         Switch vda.DtIsPinned(ownerWin) {
+         Switch vda.Locked[ownerWin] {
             Case 1:
                this.MenuIcon(rmb, tit, "UnLock on all Desktops", cbRmbHandler)
             Case 0:
@@ -1064,7 +1065,7 @@ Class clsTaskGUI {
             Default:
          }
          ; Non-pinned apps
-         If (vda.DtIsPinned(ownerWin) = 0) {
+         If (Not vda.Locked[ownerWin]) {
             winDt := vda.DtID(ownerWin)
             ; Loop over desktops
             Loop vda.DtCount {
@@ -1218,10 +1219,10 @@ Class clsTaskGUI {
             clampWindow(ownerWin, 4)
 
          Case "UnLock on all Desktops":
-            vda.DtUnPinWin(ownerWin)
+            vda.Locked[ownerWin] := false
 
          Case "Lock on all Desktops":
-            vda.DtPinWin(ownerWin)
+            vda.Locked[ownerWin] := true
 
          Case "Move Offscreen Windows To":
             For i, hwnd in this.WindowsNotMonitor() {

@@ -10,7 +10,7 @@
 Class monInfo {
    Static mnInfoHash     := Map() ; save copy of last monitor scan
    Static activeMonitor  := 0
-   Static DPI            := 096
+   Static DPI            := 96
    Static MonCount       := 0
    Static Ratio          := 1
    Static X              := 0
@@ -31,6 +31,9 @@ Class monInfo {
 
    Static __new() {
       this._monLocations()
+      ; Every time monitors ore connected/disconnect or dpi changes then update location info
+      OnMessage(0x007E, monInfo._monLocations.bind(this))  ; WM_DISPLAYCHANGE
+
    }
    Static __delete() {
       CallbackFree(this.cbEnumMonitors)
@@ -39,10 +42,15 @@ Class monInfo {
    ; Enum the monitors to capture their relative locations and other info
    ; monInfo.mnInfoHash contains all of the data
    ;----------------------------------------------------------------------------
-   Static _monLocations() {
+   Static _monLocations(*) {
       this.mnInfoHash.Clear()
       DllCall("User32\EnumDisplayMonitors", "Ptr", 0, "Ptr", 0, "Ptr", this.cbEnumMonitors, "Uint", 0)
       this.MonCount := this.mnInfoHash.Count
+      Debug("Monitors DPI or count changed = " this.mnInfoHash.Count)
+      for hMonitor in this.mnInfoHash {
+         objMonitor := this.mnInfoHash[hMonitor]
+         debug(" ⇨ Name=" objMonitor.Name ", Width=" objMonitor.Width ", DPI=" objMonitor.DPI)
+      }
       Return this.MonCount
    }
    ;----------------------------------------------------------------------------
@@ -79,9 +87,9 @@ Class monInfo {
          mnInfo.Width  := stMonInfo.rcWork.Width   ; (mnInfo.Right - mnInfo.Left)
          mnInfo.Height := stMonInfo.rcWork.Height  ;(mnInfo.Bottom - mnInfo.Top)
          ; mnInfo.Pixels := (mnInfo.Width) * (mnInfo.Height)
-         Name          := stMonInfo.name
+         mnInfo.Name   := stMonInfo.name
          ; Name           = \\.\DISPLAY1 -> 1, same as stDISPLAY_DEVICE.DeviceName
-         mnInfo.Index  := RegExReplace(Name, ".*(\d+)$", "$1")
+         mnInfo.Index  := RegExReplace(mnInfo.Name, ".*(\d+)$", "$1")
          ; Get the real DPI of this monitor, used to set icon/font size during launch
          DllCall(GetDpiForMonitor, "Ptr", hMonitor, "UInt", MDT_EFFECTIVE_DPI, "Ptr*", &dpiX := 0, "Ptr*", &dpiY := 0)
          mnInfo.DPI := Round(Sqrt(dpiX * dpiY))
@@ -116,7 +124,7 @@ Class monInfo {
       point := (Mx & 0xFFFFFFFF) | (My << 32)
       hMonitor := DllCall("MonitorFromPoint", "Int64", point, "UInt", 0, "Ptr")
       ; Refresh all monitor information
-      this._monLocations()
+      ; this._monLocations()
       ; Update this class instance with active monitor information
       mnInfo := this.mnInfoHash[hMonitor]
       ; Public properties

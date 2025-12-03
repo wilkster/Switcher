@@ -582,16 +582,10 @@ Class clsTaskGUI {
    ; Need a method to see if the window is hung first chicken-egg issue if we get it this way
    ;----------------------------------------------------------------------------
    cacheExplorerPaths() {
-      this.explorerPathCache.Clear()
       now := A_TickCount
-      For oWin in ComObject("Shell.Application").Windows {
-         If (oWin.Name = "File Explorer") {
-            this.explorerPathCache[oWin.HWND] := oWin.Document.Folder.Self.Path
-         }
-      }
-      if (A_TickCount - now > 500)
+      this.explorerPathCache := Explorer.getAllActivePaths()
+      if (A_TickCount - now > 100)
          warning("Required " A_TickCount - now "ms to get explorer paths")
-      oWin := ""
       Return this.explorerPathCache.Count
    }
    ;----------------------------------------------------------------------------
@@ -1321,6 +1315,13 @@ Class clsTaskGUI {
             this.closeGUI()
             MsgBox("'" winTitle "' is disabled or has a dialog box open, please close it first!")
             Return false
+         } Else If (Explorer.isTabWindow(targetWin)) {
+            ; Explorer tabs we just close the parent and only the tab closes unless it is the last tab
+            Try {
+               WinClose(GetParent(targetWin))
+            } Catch As E {
+               eLog(e)
+            }
          } Else {
             now := A_TickCount
             Try {
@@ -1565,7 +1566,12 @@ Class clsTaskGUI {
    ; Functionize some cryptic old style AHK calls
    ;===========================================================================================================
    myWinActivate(hWnd) {
-      this.tskViewObj.windowToTop(hWnd)
+      If (Explorer.isTabWindow(hWnd)) {
+         ; this.tskViewObj.windowToTop(hWnd)
+         Explorer.activateTabHandle(hWnd)
+      } Else {
+         this.tskViewObj.windowToTop(hWnd)
+      }
    }
    ;----------------------------------------------------------------------------
    ; Constrain a number between left and right boundaries

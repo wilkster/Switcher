@@ -249,6 +249,7 @@ Class clsTaskView {
       }
       ; 2024-03-27 Check for WinExist vs any handle
       If (inTask AND WinExist(myHwnd)) {
+         ; TODO - For file explorer we enumerate with shell.windows and all windows will have the same handle.
          this.arrayTasks := Array()
          ; Push any child windows into arrayTasks with this callback
          EnumChildWindows(myHwnd, this.CWCB, 1)
@@ -259,7 +260,9 @@ Class clsTaskView {
                ; BUG - When we close an explorer window we won't get siblings here since it fails WinExist
                ;       Both owner and target windows are the same, and they are both gone at this point
                Case "CabinetWClass": ; Windows Explorer
-                  wid_List := WinGetList("ahk_class " WinGetClass(myHwnd)) ; Windows for sameClass Instance name as active
+                  ; wid_List := WinGetList("ahk_class " WinGetClass(myHwnd)) ; Windows for sameClass Instance name as active
+                  this.arrayTasks := Explorer.getTabHandles()
+                  Return
                   ; TODO - Would be nice to get windows11 explorer tabs here vs the window handles
                   ; Work out details of control handle vs window handle (not really a child window)
                   ; Almost works but the tab isn't activated in cbLbSelect but the correct window is jumpped to

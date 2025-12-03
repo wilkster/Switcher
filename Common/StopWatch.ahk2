@@ -4,16 +4,16 @@
 #Include dllFactory.ahk2            ; Common files, mostly dllcall window related
 
 class clsStopWatch {
-   freq := 0
-   CounterBefore := 0
-   CounterStart := 0
+   freq            := 0
+   CounterBefore   := 0
+   CounterStart    := 0
    CounterLapStart := 0
-   state :=-1
-   lapTime := 0
-   cumTime := 0
+   state           := -1
+   lapTime         := 0
+   cumTime         := 0
    __new() {
       freq := -1
-      this.qfc := DllCall("GetModuleHandle", "str", "Kernel32.dll\QueryPerformanceCounter", "ptr")
+      this.qfc := DllCall("GetModuleHandle", "str", "QueryPerformanceCounter", "ptr")
       DllCall("QueryPerformanceFrequency", "Int64*", &freq)
       this.freq := freq
    }

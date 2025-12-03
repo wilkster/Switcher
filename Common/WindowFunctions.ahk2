@@ -862,5 +862,134 @@ GetProcessDpiAwareness(hwnd) {
 }
 ; HICON:%IconHwnd%
 
+Class Explorer {
+   /**
+    * Return the active selection in an explorer window, including windows 11 tabs.
+    * @param {Integer} hwnd 
+    * @returns {String} Selected folder/file
+    */
+   Static getAllActivePaths() {
+      pathHash := Map()
+      ; window handles are the same for each instance
+      For objWindow in ComObject("Shell.Application").Windows {
+         hWnd := objWindow.hWnd
+         If ( NOT pathHash.Has(hWnd)) {
+            hWactiveTab := Explorer.ActiveTabHandle(hWnd)
+            ; Works with windows 10 as well
+            If (hWactiveTab) { ; The window has tabs, so make sure this is the right one.
+               ; Get proper window handle
+               hWthisTab := Explorer.TabHandle(objWindow)
+               ; If ths tab is active tab then return the path
+               If (hWthisTab == hWactiveTab) {
+                  pathHash[hWnd] := objWindow.Document.folder.Self.Path
+               }
+            }
+         }
+      }
+      Return pathHash
+   }
+   /**
+    * Return the control handle of the active tab
+    * @param hWnd Explorer window or tab handle
+    * @returns {Integer} 
+    */
+   Static ActiveTabHandle(hWnd) {
+      hWactiveTab := 0
+      Try
+         hWactiveTab := ControlGetHwnd("ShellTabWindowClass1", hWnd) ; File Explorer (Windows 11)
+      Catch
+         Try hWactiveTab := ControlGetHwnd("TabWindowClass1", hWnd) ; IE
+      Return hWactiveTab
+   }
+   /**
+    * Return the Explorer tab control handle bsaed on window object from shell
+    * @param objWindow Shell object for the explorer instance or tab on windows 11
+    */
+   Static TabHandle(objWindow) {
+      Static IID_IShellBrowser := "{000214E2-0000-0000-C000-000000000046}"
+      shellBrowser := ComObjQuery(objWindow, IID_IShellBrowser, IID_IShellBrowser)
+      ComCall(3, shellBrowser, "uint*", &hWthisTab := 0)
+      Return hWthisTab
+   }
+   /**
+    * Return the active selection in an explorer window, including windows 11 tabs.
+    * @param {Integer} hwnd 
+    * @returns {String} Selected folder/file
+    */
+   Static getActivePath(hwnd := WinExist("A")) {
+      hWactiveTab := Explorer.ActiveTabHandle(hWnd)
+      For objWindow in ComObject("Shell.Application").Windows {
+         If (objWindow.hwnd == hwnd) {
+            ; Works with windows 10 as well
+            If (hWactiveTab) { ; The window has tabs, so make sure this is the right one.
+               hWthisTab := Explorer.TabHandle(objWindow)
+               ; shellBrowser := ComObjQuery(objWindow, IID_IShellBrowser, IID_IShellBrowser)
+               ; ComCall(3, shellBrowser, "uint*", &hWthisTab := 0)
+               If (hWthisTab == hWactiveTab) {
+                  selection := objWindow.Document.SelectedItems()
+                  If (selection.Count > 0) {
+                     Return selection.Item(0).Path ; first selection only
+                  } Else {
+                     Return objWindow.Document.folder.Self.Path
+                  }
+               }
+            }
+         }
+      }
+      Return ""
+   }
+   /**
+    * Return a list of child tabs (or tab) on an explorer window
+    * @param {Integer} hwnd 
+    * @returns {Array} array of control handles
+    */
+   Static getTabHandles(hwnd := 0) {
+      handles := []
+      For objWindow in ComObject("Shell.Application").Windows {
+         If (objWindow.hWnd = hwnd OR hwnd = 0) {
+            handles.push(Explorer.TabHandle(objWindow))
+         }
+      }
+      Return handles
+   }
+   /**
+    * Determine if a window is a tab control on windows explorer
+    * @param hWnd Handlw to check
+    * @returns {Number} 
+    */
+   Static isTabWindow(hWnd) {
+      Return (WinGetClass(hWnd) = "ShellTabWindowClass")
+   }
+      /**
+    * Return a list of child tabs (or tab) on an explorer window
+    * Relys on caller making the window the foreground
+    * @param {Integer} hwnd tab handle
+    * @returns {Array} array of control handles
+    */
+   Static activateTabHandle(hwnd := 0) {
+      parent := GetParent(hwnd)
+      tabCount := 0
+      For objWindow in ComObject("Shell.Application").Windows {
+         If (objWindow.hWnd = parent) {
+            tabCount++
+         }
+      }
+      If (tabCount > 1) {
+         WinActivate(parent)
+         If (WinWaitActive(parent, , 0.2)) {
+            ; Loop until we have an active tab
+            ; HACK - Can't find an api to do this
+            Loop tabCount {
+               If (hwnd = this.ActiveTabHandle(parent))
+                  Return true
+               ; Next tab
+               SendInput("^{tab}")
+               Sleep(100)
+            }
+         }
+      }
+      Return false
+   }
+}
 
 dlog("Include File Loaded")

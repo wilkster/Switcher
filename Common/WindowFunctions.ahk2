@@ -861,7 +861,7 @@ GetProcessDpiAwareness(hwnd) {
    Return DPI_AWARENESS
 }
 ; HICON:%IconHwnd%
-
+; TODO - convert "::{" to true names
 Class Explorer {
    /**
     * Return the active selection in an explorer window, including windows 11 tabs.
@@ -872,18 +872,35 @@ Class Explorer {
       pathHash := Map()
       ; window handles are the same for each instance
       For objWindow in ComObject("Shell.Application").Windows {
-         hWnd := objWindow.hWnd
-         If ( NOT pathHash.Has(hWnd)) {
-            hWactiveTab := Explorer.ActiveTabHandle(hWnd)
-            ; Works with windows 10 as well
-            If (hWactiveTab) { ; The window has tabs, so make sure this is the right one.
-               ; Get proper window handle
-               hWthisTab := Explorer.TabHandle(objWindow)
-               ; If ths tab is active tab then return the path
-               If (hWthisTab == hWactiveTab) {
-                  pathHash[hWnd] := objWindow.Document.folder.Self.Path
+         If (objWindow.name = "File Explorer") {
+            hWnd := objWindow.hWnd
+            If ( NOT pathHash.Has(hWnd)) {
+               hWactiveTab := Explorer.ActiveTabHandle(hWnd)
+               ; Works with windows 10 as well
+               If (hWactiveTab) { ; The window has tabs, so make sure this is the right one.
+                  ; Get proper window handle
+                  hWthisTab := Explorer.TabHandle(objWindow)
+                  ; If ths tab is active tab then return the path
+                  If (hWthisTab == hWactiveTab) {
+                     pathHash[hWnd] := objWindow.Document.folder.Self.Path
+                  }
                }
             }
+         }
+      }
+      Return pathHash
+   }
+
+   /**
+    * Return a list of paths for each handle in all explorer window
+    * @returns {Map} Map of tab handles to paths 
+    */
+   Static getAllTabPaths() {
+      pathHash := Map()
+      For objWindow in ComObject("Shell.Application").Windows {
+         If (objWindow.name = "File Explorer") {
+            if (hWthisTab := Explorer.TabHandle(objWindow))
+               pathHash[hWthisTab] := objWindow.Document.folder.Self.Path
          }
       }
       Return pathHash
@@ -907,8 +924,13 @@ Class Explorer {
     */
    Static TabHandle(objWindow) {
       Static IID_IShellBrowser := "{000214E2-0000-0000-C000-000000000046}"
-      shellBrowser := ComObjQuery(objWindow, IID_IShellBrowser, IID_IShellBrowser)
-      ComCall(3, shellBrowser, "uint*", &hWthisTab := 0)
+      hWthisTab := 0
+      Try {
+         shellBrowser := ComObjQuery(objWindow, IID_IShellBrowser, IID_IShellBrowser)
+         ComCall(3, shellBrowser, "uint*", &hWthisTab := 0)
+      } Catch Error As e {
+         eLog(e)
+      }
       Return hWthisTab
    }
    /**
@@ -917,20 +939,22 @@ Class Explorer {
     * @returns {String} Selected folder/file
     */
    Static getActivePath(hwnd := WinExist("A")) {
-      hWactiveTab := Explorer.ActiveTabHandle(hWnd)
+      hWactiveTab := Explorer.ActiveTabHandle(hwnd)
       For objWindow in ComObject("Shell.Application").Windows {
-         If (objWindow.hwnd == hwnd) {
-            ; Works with windows 10 as well
-            If (hWactiveTab) { ; The window has tabs, so make sure this is the right one.
-               hWthisTab := Explorer.TabHandle(objWindow)
-               ; shellBrowser := ComObjQuery(objWindow, IID_IShellBrowser, IID_IShellBrowser)
-               ; ComCall(3, shellBrowser, "uint*", &hWthisTab := 0)
-               If (hWthisTab == hWactiveTab) {
-                  selection := objWindow.Document.SelectedItems()
-                  If (selection.Count > 0) {
-                     Return selection.Item(0).Path ; first selection only
-                  } Else {
-                     Return objWindow.Document.folder.Self.Path
+         If (objWindow.name = "File Explorer") {
+            If (objWindow.hwnd == hwnd) {
+               ; Works with windows 10 as well
+               If (hWactiveTab) { ; The window has tabs, so make sure this is the right one.
+                  hWthisTab := Explorer.TabHandle(objWindow)
+                  ; shellBrowser := ComObjQuery(objWindow, IID_IShellBrowser, IID_IShellBrowser)
+                  ; ComCall(3, shellBrowser, "uint*", &hWthisTab := 0)
+                  If (hWthisTab == hWactiveTab) {
+                     selection := objWindow.Document.SelectedItems()
+                     If (selection.Count > 0) {
+                        Return selection.Item(0).Path ; first selection only
+                     } Else {
+                        Return objWindow.Document.folder.Self.Path
+                     }
                   }
                }
             }
@@ -946,8 +970,14 @@ Class Explorer {
    Static getTabHandles(hwnd := 0) {
       handles := []
       For objWindow in ComObject("Shell.Application").Windows {
-         If (objWindow.hWnd = hwnd OR hwnd = 0) {
-            handles.push(Explorer.TabHandle(objWindow))
+         If (objWindow.name = "File Explorer") {
+            Try {
+               If (objWindow.hWnd = hwnd OR hwnd = 0) {
+                  handles.push(Explorer.TabHandle(objWindow))
+               }
+            } Catch Error As e {
+               elog(e)
+            }
          }
       }
       Return handles
@@ -958,7 +988,8 @@ Class Explorer {
     * @returns {Number} 
     */
    Static isTabWindow(hWnd) {
-      Return (WinGetClass(hWnd) = "ShellTabWindowClass")
+      Global A_OSVer
+      Return (A_OSVer > 10 AND WinGetClass(hWnd) = "ShellTabWindowClass")
    }
       /**
     * Return a list of child tabs (or tab) on an explorer window
@@ -966,27 +997,40 @@ Class Explorer {
     * @param {Integer} hwnd tab handle
     * @returns {Array} array of control handles
     */
-   Static activateTabHandle(hwnd := 0) {
-      parent := GetParent(hwnd)
+   Static activateTabHandle(tgtTabHwnd := 0) {
+      parent := GetParent(tgtTabHwnd)
       tabCount := 0
       For objWindow in ComObject("Shell.Application").Windows {
-         If (objWindow.hWnd = parent) {
-            tabCount++
+         If (objWindow.name = "File Explorer") {
+            If (objWindow.hWnd = parent) {
+               tabCount++
+            }
          }
       }
+      WinActivate(parent)
       If (tabCount > 1) {
-         WinActivate(parent)
+      ; HACK - Can't find an api to do this via an api
          If (WinWaitActive(parent, , 0.2)) {
+            ; Set focus to the tab bar itself, otherwise we may not recognize the Ctrl-Tab
+            ControlFocus(tgtTabHwnd, parent) ; active the current tab, can't cherry pick tabs to focus on so loop
             ; Loop until we have an active tab
-            ; HACK - Can't find an api to do this
             Loop tabCount {
-               If (hwnd = this.ActiveTabHandle(parent))
+               If (tgtTabHwnd = (actTabHwnd := this.ActiveTabHandle(parent)))
                   Return true
                ; Next tab
                SendInput("^{tab}")
-               Sleep(100)
+               TO := A_TickCount + 1000
+               ; The new tab will be active when the window tab changes
+               While (actTabHwnd = this.ActiveTabHandle(parent) AND A_TickCount < TO) {
+                  ; debug(A_Index " " this.ActiveTabHandle(parent))
+                  Sleep(10)
+               }
             }
+         } Else {
+            debug("Failed to activate parent:" parent)
          }
+      } Else {
+         Return true
       }
       Return false
    }

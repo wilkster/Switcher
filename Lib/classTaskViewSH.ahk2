@@ -82,8 +82,8 @@ Class clsTaskView {
    Entries {	;131
       get => this.arrayTasks.Length
    }
-   Populate(inTask, hwnd := 0) {
-      this.TopLevelWindowList(inTask, hwnd)
+   Populate(inTask, hwnd := 0, targetClass:="") {
+      this.TopLevelWindowList(inTask, hwnd, targetClass)
    }
    Contents {
       get => this.arrayTasks
@@ -239,17 +239,24 @@ Class clsTaskView {
    ; https://autohotkey.com/boards/viewtopic.php?f=5&t=28760&p=135057
    ; https://github.com/kvakulo/Switcheroo/blob/master/Core/AppWindow.cs
    ;----------------------------------------------------------------------------
-   TopLevelWindowList(inTask := 0, myHwnd := 0) {
+   TopLevelWindowList(inTask := 0, myHwnd := 0, targetClass :="") {
       ;----------------------------------------------------------------------------
       ; Code below
       ; This will only work if the active task is as intented
       ;----------------------------------------------------------------------------
       If (myHwnd = 0) {
          myHwnd := WinActive("A")
+         targetClass := getClassName(myHwnd)
       }
+      ; Kinda Hacky, explorer sibling won't work if the target window was killed so we
+      ; need to pass in the targetClass. However, on normal intask popups we use the 
+      ; active window and that class is the top level explorer class and not the tab class
+      ; targetClass := WinExist(myHwnd) ? WinGetClass(myHwnd) : targetClass
+      If (inTask and targetClass = "CabinetWClass") {
+         ; File explorer we use the shell to get the handles of type ShellTabWindowClass (win10/win11)
+         this.arrayTasks := Explorer.getTabHandles()
       ; 2024-03-27 Check for WinExist vs any handle
-      If (inTask AND WinExist(myHwnd)) {
-         ; TODO - For file explorer we enumerate with shell.windows and all windows will have the same handle.
+      } else If (inTask AND WinExist(myHwnd)) {
          this.arrayTasks := Array()
          ; Push any child windows into arrayTasks with this callback
          EnumChildWindows(myHwnd, this.CWCB, 1)
@@ -257,23 +264,11 @@ Class clsTaskView {
          If (this.arrayTasks.Length = 0) {
             cls := WinGetClass(myHwnd)
             Switch cls {
-               ; BUG - When we close an explorer window we won't get siblings here since it fails WinExist
-               ;       Both owner and target windows are the same, and they are both gone at this point
-               Case "CabinetWClass": ; Windows Explorer
-                  ; wid_List := WinGetList("ahk_class " WinGetClass(myHwnd)) ; Windows for sameClass Instance name as active
-                  this.arrayTasks := Explorer.getTabHandles()
-                  Return
-                  ; TODO - Would be nice to get windows11 explorer tabs here vs the window handles
-                  ; Work out details of control handle vs window handle (not really a child window)
-                  ; Almost works but the tab isn't activated in cbLbSelect but the correct window is jumpped to
-                  ; this.arrayTasks := GetActiveExplorerTab()
-                  ; Return myHwnd
                Case "XLMAIN": ; Excel
-                  wid_List := WinGetList("ahk_class " WinGetClass(myHwnd)) ; Windows for sameClass Instance name as active
+                  wid_List := WinGetList("ahk_class " cls) ; Windows for sameClass Instance name as active
                Default:
-                  wid_List := WinGetList("ahk_class " WinGetClass(myHwnd) " ahk_pid " WinGetPID(myHwnd)) ; Windows for same Class/PID Instance name as active
+                  wid_List := WinGetList("ahk_class " cls " ahk_pid " WinGetPID(myHwnd)) ; Windows for same Class/PID Instance name as active
             }
-            ; CabinetWClass is class for Windows 10/11 explorer
             ; Loop over each window in Z-order and extract those we care about into arrayTasks
             ; Looks like many non-candidates don't make it to the WinGetList (which is nice)
             this.arrayTasks.Capacity := wid_List.Length

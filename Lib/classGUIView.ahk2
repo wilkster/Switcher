@@ -404,7 +404,7 @@ Class clsTaskGUI {
       }
       ; Use explorer full paths vs what is in the title
       if (SETTINGS.ExplorerPath)
-         this.cacheExplorerPaths()
+         this.cacheExplorerPaths(this.inTask)
 
       ; Iterate over each Alt-Tab task in taskArray
       ; Build up items in listview
@@ -433,16 +433,17 @@ Class clsTaskGUI {
          ;================== Limit/Pad title length ====================
          While ((l := StrLen(title)) > this.maxTitLen) {
             ; Explorer just trim the front
-            If (WinGetClass(itHwnd) = "CabinetWClass") {
-               title := "…" . SubStr(Trim(title), l - this.maxTitLen)
-               break
-            } Else {
-            ; Chrome/Edge be smarter about trimming
-               title := RegExReplace(title, "^(.+)(/| - | \| |\\| ).*$", "$1", &matches := 0)
-               If matches == 0 {
+            Switch WinGetClass(itHwnd) {
+               Case "CabinetWClass", "ShellTabWindowClass":
                   title := "…" . SubStr(Trim(title), l - this.maxTitLen)
-                  break
-               }
+                  Break
+               Default:
+                  ; Chrome/Edge be smarter about trimming
+                  title := RegExReplace(title, "^(.+)(/| - | \| |\\| ).*$", "$1", &matches := 0)
+                  If matches == 0 {
+                     title := "…" . SubStr(Trim(title), l - this.maxTitLen)
+                     Break
+                  }
             }
          } Else {
             ; Pad to minimum width
@@ -581,9 +582,12 @@ Class clsTaskGUI {
    ; The ComObject("Shell.Application").Windows will hang/delay explorer is busy
    ; Need a method to see if the window is hung first chicken-egg issue if we get it this way
    ;----------------------------------------------------------------------------
-   cacheExplorerPaths() {
+   cacheExplorerPaths(inTask:=false) {
       now := A_TickCount
-      this.explorerPathCache := Explorer.getAllActivePaths()
+      if (inTask)
+         this.explorerPathCache := Explorer.getAllTabPaths()
+      else
+         this.explorerPathCache := Explorer.getAllActivePaths()
       if (A_TickCount - now > 100)
          warning("Required " A_TickCount - now "ms to get explorer paths")
       Return this.explorerPathCache.Count
@@ -661,11 +665,11 @@ Class clsTaskGUI {
    ; always restore at last known position
    ; Doing our best to avoid any irritating screen flashes on refresh
    ;----------------------------------------------------------------------------
-   lbRefresh(aWin) {
+   lbRefresh(aWin, targetClass :="") {
       ; Critical 1
       rowNum := ListViewGetContent("Focused", this.guiObj.hWnd)
       this.lvObj.Opt("-Redraw")	; prevent change from flashing listview
-      this.tskViewObj.Populate(this.inTask, aWin)   ; Parent window needed for siblings/intask
+      this.tskViewObj.Populate(this.inTask, aWin, targetClass)   ; Parent window needed for siblings/intask
       this.lvObj.Delete()
       this.lvPopulate()
       this.clvObj.lockTitleWidth(this.indexTitle, 2)
@@ -757,6 +761,7 @@ Class clsTaskGUI {
             this.lvObj.Delete(rNum)
          }
          ownerWin := GetRoot(hWnd)
+         targetClass := WinGetClass(ownerWin)
 
          ; Some of these actions will forece focus elsewhere so disable the timer for now
          this.setFocusTimer(0)
@@ -891,8 +896,9 @@ Class clsTaskGUI {
       } Catch As e {
          elog(e)
       }
-
-      If (this.lbRefresh(ownerWin)) {
+      ; TODO - should we pass in the originall class to lbRefresh so the tasklist can populate explorer or sibling windows correctly
+      ; The window handle is dead at this point so of no use on windows 10.
+      If (this.lbRefresh(ownerWin, targetClass)) {
          ; Try to reselect the row
          this.lvObj.Modify(rNum, "Select Focus")
          this.setFocusTimer(1)
@@ -1130,6 +1136,7 @@ Class clsTaskGUI {
       ; Only want the command part
       ItemName := SubStr(ItemName, 1, InStr(ItemName, ":") - 1)
       noCaption := hasNoCaption(ownerWin)
+      targetClass := WinGetClass(ownerWin)
       ; debug(ItemName . " " WinGetProcessPath(ownerWin))
       Static delay := 0
       Switch ItemName, "On" {
@@ -1282,7 +1289,7 @@ Class clsTaskGUI {
       ; Close the pop-up menu, leave the gui
       menuObj.Delete()
       ; GUI may have been closed by focus timer
-      If (this.lbRefresh(ownerWin))
+      If (this.lbRefresh(ownerWin,targetClass))
          this.setFocusTimer(1)
       Return
    }
@@ -1305,6 +1312,7 @@ Class clsTaskGUI {
          ; SendMessage(Msg , wParam, , , WinTitle, , , , Timeout])
          winTitle := WinGetTitle(targetWin)
          ; debug("State=" Hex(TitleBarState(targetWin)))
+         debug("Owner=" WinGetClass(ownerWin) ", Target=" WinGetClass(targetWin))
          If (IsHungAppWindow(ownerWin)) {
             CloseMenu()
             Return (MsgBox("'" winTitle "' is hung and needs to be forcibly killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") ? EndTask(ownerWin) : false
@@ -1318,7 +1326,13 @@ Class clsTaskGUI {
          } Else If (Explorer.isTabWindow(targetWin)) {
             ; Explorer tabs we just close the parent and only the tab closes unless it is the last tab
             Try {
-               WinClose(GetParent(targetWin))
+               If (Explorer.activateTabHandle(targetWin)) {
+                  WinClose(GetParent(targetWin))
+                  Return true
+               } Else {
+                  TrayTip("Failed to activate tab")
+                  Return false
+               }
             } Catch As E {
                eLog(e)
             }

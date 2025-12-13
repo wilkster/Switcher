@@ -46,10 +46,12 @@ Class monInfo {
       this.mnInfoHash.Clear()
       DllCall("User32\EnumDisplayMonitors", "Ptr", 0, "Ptr", 0, "Ptr", this.cbEnumMonitors, "Uint", 0)
       this.MonCount := this.mnInfoHash.Count
-      Debug("Monitors DPI or count changed = " this.mnInfoHash.Count)
+      Debug(A_ScriptName " Monitors DPI or count changed = " this.mnInfoHash.Count)
       for hMonitor in this.mnInfoHash {
          objMonitor := this.mnInfoHash[hMonitor]
-         debug(" ⇨ Name=" objMonitor.Name ", Width=" objMonitor.Width ", DPI=" objMonitor.DPI)
+         pInfo := dxva2.getPhysMonitorsInfo(hMonitor)
+         debug("  ⇨ Name=" pInfo.Name " (" objMonitor.Name ") , Width=" objMonitor.Width ", DPI=" objMonitor.DPI)
+         dxva2.DestroyPhysicalMonitors(pInfo)
       }
       Return this.MonCount
    }
@@ -57,7 +59,6 @@ Class monInfo {
    ; Enumerator for the monitor enum callback
    ; Gather relavent info for each attached monitor
    ; Gets data on disconnected monitors as well
-   ; TODO - add Index starting at 1 as that is how AHK does it.
    ;----------------------------------------------------------------------------
    Static MonitorEnumProc(hMonitor, hDC, pRECT, userParam) {
       Static MDT_EFFECTIVE_DPI := 0
@@ -87,6 +88,7 @@ Class monInfo {
          mnInfo.Width  := stMonInfo.rcWork.Width   ; (mnInfo.Right - mnInfo.Left)
          mnInfo.Height := stMonInfo.rcWork.Height  ;(mnInfo.Bottom - mnInfo.Top)
          ; mnInfo.Pixels := (mnInfo.Width) * (mnInfo.Height)
+         ; NOTE - friendly name is returned from getPhysMonitorsInfo
          mnInfo.Name   := stMonInfo.name
          ; Name           = \\.\DISPLAY1 -> 1, same as stDISPLAY_DEVICE.DeviceName
          mnInfo.Index  := RegExReplace(mnInfo.Name, ".*(\d+)$", "$1")
@@ -503,7 +505,7 @@ Class dxva2 {
    }
    ;----------------------------------------------------------------------
    ; Return a handle to a monitor from a window
-   ; NOTE - Must destroy the handle when done with it externally
+   ; NOTE - User Must destroy the handle when done with it externally
    ;----------------------------------------------------------------------
    Static getPhysMonitorsInfo(hMon) {
       Static GetNumberOfPhysicalMonitorsFromHMONITOR := GetModHandle("GetNumberOfPhysicalMonitorsFromHMONITOR", "Dxva2.dll")
@@ -514,7 +516,7 @@ Class dxva2 {
       If (DllCall(GetNumberOfPhysicalMonitorsFromHMONITOR, "ptr", hMon, "uint*", &numPhyMon := 0, "Int")) {
          ; Get Physical Monitor from handle
          bufPhyMon := Buffer((A_PtrSize + 256) * numPhyMon, 0)
-         If (DllCall(GetPhysicalMonitorsFromHMONITOR, "Ptr", hMon, "uint", numPhyMon, "Ptr", bufPhyMon.Ptr, "Int")) {
+         If (hPhysicalMonitor := DllCall(GetPhysicalMonitorsFromHMONITOR, "Ptr", hMon, "uint", numPhyMon, "Ptr", bufPhyMon.Ptr, "Int")) {
             ; Handles are 0 based ... 0,1,2,...
             ; NOTE - Just getting the 1st physical monitor
             pmInfo.pHandle := NumGet(bufPhyMon.Ptr, 0, "Ptr")
@@ -526,7 +528,7 @@ Class dxva2 {
             logError("Failed to get GetPhysicalMonitorsFromHMONITOR")
          }
       } Else {
-         logError("Failed to get GetNumberOfPhysicalMonitorsFromHMONITOR")
+         logError("Failed to get GetNumberOfPhysicalMonitorsFromHMONITOR, monitors=:" numPhyMon)
       }
       pmInfo.pHandle := -1
       pmInfo.Name    := "Error"

@@ -435,7 +435,7 @@ Class clsTaskGUI {
             ; Explorer just trim the front
             Switch WinGetClass(itHwnd) {
                Case "CabinetWClass", "ShellTabWindowClass":
-                  title := "…" . SubStr(Trim(title), l - this.maxTitLen)
+                  title := " " . SubStr(Trim(title), 1, this.maxTitLen/2) . "…" . SubStr(Trim(title), l - this.maxTitLen/2)
                   Break
                Default:
                   ; Chrome/Edge be smarter about trimming
@@ -665,11 +665,11 @@ Class clsTaskGUI {
    ; always restore at last known position
    ; Doing our best to avoid any irritating screen flashes on refresh
    ;----------------------------------------------------------------------------
-   lbRefresh(aWin, targetClass :="") {
+   lbRefresh(aWin, targetName :="") {
       ; Critical 1
       rowNum := ListViewGetContent("Focused", this.guiObj.hWnd)
       this.lvObj.Opt("-Redraw")	; prevent change from flashing listview
-      this.tskViewObj.Populate(this.inTask, aWin, targetClass)   ; Parent window needed for siblings/intask
+      this.tskViewObj.Populate(this.inTask, aWin, targetName)   ; Parent window needed for siblings/intask
       this.lvObj.Delete()
       this.lvPopulate()
       this.clvObj.lockTitleWidth(this.indexTitle, 2)
@@ -761,7 +761,7 @@ Class clsTaskGUI {
             this.lvObj.Delete(rNum)
          }
          ownerWin := GetRoot(hWnd)
-         targetClass := WinGetClass(ownerWin)
+         targetName := WinGetProcessName(ownerWin)
 
          ; Some of these actions will forece focus elsewhere so disable the timer for now
          this.setFocusTimer(0)
@@ -893,15 +893,14 @@ Class clsTaskGUI {
                MsgBox("Unknown Column " cNum " selected!")
 
          }
+         ; The window handle is dead at this point so of no use on windows 10. targetName is the original process name
+         If (this.lbRefresh(ownerWin, targetName)) {
+            ; Try to reselect the row
+            this.lvObj.Modify(rNum, "Select Focus")
+            this.setFocusTimer(1)
+         }
       } Catch As e {
          elog(e)
-      }
-      ; TODO - should we pass in the originall class to lbRefresh so the tasklist can populate explorer or sibling windows correctly
-      ; The window handle is dead at this point so of no use on windows 10.
-      If (this.lbRefresh(ownerWin, targetClass)) {
-         ; Try to reselect the row
-         this.lvObj.Modify(rNum, "Select Focus")
-         this.setFocusTimer(1)
       }
 
    }
@@ -1134,9 +1133,9 @@ Class clsTaskGUI {
       ; Disable focus timer as GUIs are moved around
       this.setFocusTimer(0)
       ; Only want the command part
-      ItemName := SubStr(ItemName, 1, InStr(ItemName, ":") - 1)
-      noCaption := hasNoCaption(ownerWin)
-      targetClass := WinGetClass(ownerWin)
+      ItemName   := SubStr(ItemName, 1, InStr(ItemName, ":") - 1)
+      noCaption  := hasNoCaption(ownerWin)
+      targetName := WinGetProcessName(ownerWin)
       ; debug(ItemName . " " WinGetProcessPath(ownerWin))
       Static delay := 0
       Switch ItemName, "On" {
@@ -1289,7 +1288,7 @@ Class clsTaskGUI {
       ; Close the pop-up menu, leave the gui
       menuObj.Delete()
       ; GUI may have been closed by focus timer
-      If (this.lbRefresh(ownerWin,targetClass))
+      If (this.lbRefresh(ownerWin,targetName))
          this.setFocusTimer(1)
       Return
    }

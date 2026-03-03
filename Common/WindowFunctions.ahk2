@@ -988,8 +988,7 @@ Class Explorer {
     * @returns {Number} 
     */
    Static isTabWindow(hWnd) {
-      Global A_OSVer
-      Return (A_OSVer > 10 AND WinGetClass(hWnd) = "ShellTabWindowClass")
+      Return (OSVersion() > 10 AND WinGetClass(hWnd) = "ShellTabWindowClass")
    }
       /**
     * Return a list of child tabs (or tab) on an explorer window

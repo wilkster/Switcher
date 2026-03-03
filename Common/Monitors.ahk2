@@ -28,7 +28,7 @@ Class monInfo {
    Static WIN_CFS        := 3    ; Chrome Full Screen
    Static WIN_SNAP       := 4    ; Normal but snapped
    Static cbEnumMonitors := CallbackCreate(monInfo.MonitorEnumProc.bind(this), "Fast", 4)
-
+   Static lastCallback   := 0
    Static __new() {
       this._monLocations()
       ; Every time monitors ore connected/disconnect or dpi changes then update location info
@@ -43,17 +43,19 @@ Class monInfo {
    ; monInfo.mnInfoHash contains all of the data
    ;----------------------------------------------------------------------------
    Static _monLocations(*) {
-      this.mnInfoHash.Clear()
-      DllCall("User32\EnumDisplayMonitors", "Ptr", 0, "Ptr", 0, "Ptr", this.cbEnumMonitors, "Uint", 0)
-      this.MonCount := this.mnInfoHash.Count
-      Debug(A_ScriptName " Monitors DPI or count changed = " this.mnInfoHash.Count)
-      for hMonitor in this.mnInfoHash {
-         objMonitor := this.mnInfoHash[hMonitor]
-         pInfo := dxva2.getPhysMonitorsInfo(hMonitor)
-         debug("  ⇨ Name=" pInfo.Name " (" objMonitor.Name ") , Width=" objMonitor.Width ", DPI=" objMonitor.DPI)
-         dxva2.DestroyPhysicalMonitors(pInfo)
+      ; debounce repeats
+      If ((this.lastCallback + 100) < A_TickCount) {
+         this.mnInfoHash.Clear()
+         DllCall("User32\EnumDisplayMonitors", "Ptr", 0, "Ptr", 0, "Ptr", this.cbEnumMonitors, "Uint", 0)
+         this.MonCount := this.mnInfoHash.Count
+         debug("Monitors DPI or count changed = " this.mnInfoHash.Count)
+         For hMonitor in this.mnInfoHash {
+            objMonitor := this.mnInfoHash[hMonitor]
+            pInfo := dxva2.getPhysMonitorsInfo(hMonitor)
+            debug(" ⇨ Name=" pInfo.Name " (" objMonitor.Name ") , Width=" objMonitor.Width ", DPI=" objMonitor.DPI)
+         }
       }
-      Return this.MonCount
+      this.lastCallback := A_TickCount
    }
    ;----------------------------------------------------------------------------
    ; Enumerator for the monitor enum callback
@@ -128,22 +130,27 @@ Class monInfo {
       ; Refresh all monitor information
       ; this._monLocations()
       ; Update this class instance with active monitor information
-      mnInfo := this.mnInfoHash[hMonitor]
-      ; Public properties
-      ; Save key information into the class static info
-      this.Ratio         := mnInfo.ratio
-      this.activeMonitor := mnInfo.Handle
-      this.DPI           := mnInfo.DPI
+      If this.mnInfoHash.has(hMonitor) {
+         mnInfo := this.mnInfoHash[hMonitor]
+         ; Public properties
+         ; Save key information into the class static info
+         this.Ratio := mnInfo.ratio
+         this.activeMonitor := mnInfo.Handle
+         this.DPI := mnInfo.DPI
 
-      ; These are work areas not overall monitor
-      this.Top    := mnInfo.Top
-      this.Bottom := mnInfo.Bottom
-      this.Left   := mnInfo.Left
-      this.Right  := mnInfo.Right
-      this.Height := mnInfo.Height
-      this.Width  := mnInfo.Width
+         ; These are work areas not overall monitor
+         this.Top := mnInfo.Top
+         this.Bottom := mnInfo.Bottom
+         this.Left := mnInfo.Left
+         this.Right := mnInfo.Right
+         this.Height := mnInfo.Height
+         this.Width := mnInfo.Width
 
-      Return 1
+         Return 1
+      } Else {
+         elog("Failed to return monitor info for " . hMonitor)
+         Return 0
+      }
    }
 
    ;----------------------------------------------------------------------------
@@ -532,7 +539,7 @@ Class dxva2 {
       }
       pmInfo.pHandle := -1
       pmInfo.Name    := "Error"
-      pmInfo.Count   := 0
+      pmInfo.Count   := numPhyMon
       pmInfo.ptrBase := 0
       Return pmInfo
    }

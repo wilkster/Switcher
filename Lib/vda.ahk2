@@ -106,10 +106,15 @@ class vda {
    ; On Windows 10, the taskbar also broadcasts this message when the DPI of the primary display changes.
    ; https://docs.microsoft.com/en-us/windows/win32/shell/taskbar?redirectedfrom=MSDN#taskbar-creation-notification
    ;----------------------------------------------------------------------------
-   static OnExplorerRestart(wParam, lParam, msg, hwnd) {
+static OnExplorerRestart(wParam, lParam, msg, hwnd) {
+      static lastRestart := 0
       result := 0
-      dlog("Restarting Desktop Accessor DLL")
-      DllCall(this.hvRestart, "Uint", result)
+      ; debounce
+      If (A_TickCount - 100) > lastRestart {
+         dlog("Restarting Desktop Accessor DLL")
+         DllCall(this.hvRestart, "Uint", result)
+         lastRestart := A_TickCount
+      }
    }
    ;----------------------------------------------------------------------------
    ; Virtual Desktop Accessor Helpers

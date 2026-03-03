@@ -136,12 +136,7 @@ Class LV_Colors {
    ; NOTE - this is kinda kludgy since selected/focus work differently if using mouse tracking
    ; ===================================================================================================================
    LasSelRow {
-      get {
-         if this.followMouse
-            return this.lastRow
-         else
-            return this.LV.GetNext(0)
-      }
+      get => this.followMouse ? this.lastRow : this.LV.GetNext(0)
    }
    ; ===================================================================================================================
    ; SelectionColors() Sets background and/or text color for selected rows.

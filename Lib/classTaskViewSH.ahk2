@@ -82,8 +82,8 @@ Class clsTaskView {
    Entries {	;131
       get => this.arrayTasks.Length
    }
-   Populate(inTask, hwnd := 0, targetClass:="") {
-      this.TopLevelWindowList(inTask, hwnd, targetClass)
+   Populate(inTask, hwnd := 0, targetName:="") {
+      this.TopLevelWindowList(inTask, hwnd, targetName)
    }
    Contents {
       get => this.arrayTasks
@@ -239,42 +239,41 @@ Class clsTaskView {
    ; https://autohotkey.com/boards/viewtopic.php?f=5&t=28760&p=135057
    ; https://github.com/kvakulo/Switcheroo/blob/master/Core/AppWindow.cs
    ;----------------------------------------------------------------------------
-   TopLevelWindowList(inTask := 0, myHwnd := 0, targetClass :="") {
+   TopLevelWindowList(inTask := 0, myHwnd := 0, targetName :="") {
       ;----------------------------------------------------------------------------
-      ; Code below
       ; This will only work if the active task is as intented
       ;----------------------------------------------------------------------------
       If (myHwnd = 0) {
          myHwnd := WinActive("A")
-         targetClass := getClassName(myHwnd)
+         targetName := WinGetProcessName(myHwnd)
       }
       ; Kinda Hacky, explorer sibling won't work if the target window was killed so we
-      ; need to pass in the targetClass. However, on normal intask popups we use the 
+      ; need to pass in the targetName. However, on normal intask popups we use the 
       ; active window and that class is the top level explorer class and not the tab class
-      ; targetClass := WinExist(myHwnd) ? WinGetClass(myHwnd) : targetClass
-      If (inTask and targetClass = "CabinetWClass") {
-         ; File explorer we use the shell to get the handles of type ShellTabWindowClass (win10/win11)
-         this.arrayTasks := Explorer.getTabHandles()
-      ; 2024-03-27 Check for WinExist vs any handle
-      } else If (inTask AND WinExist(myHwnd)) {
-         this.arrayTasks := Array()
-         ; Push any child windows into arrayTasks with this callback
-         EnumChildWindows(myHwnd, this.CWCB, 1)
-         ; Or get any sibling windows of same class if no MDI clients found (e.g excel or explorer)
-         If (this.arrayTasks.Length = 0) {
-            cls := WinGetClass(myHwnd)
-            Switch cls {
-               Case "XLMAIN": ; Excel
-                  wid_List := WinGetList("ahk_class " cls) ; Windows for sameClass Instance name as active
-               Default:
-                  wid_List := WinGetList("ahk_class " cls " ahk_pid " WinGetPID(myHwnd)) ; Windows for same Class/PID Instance name as active
+      ; targetName := WinExist(myHwnd) ? WinGetClass(myHwnd) : targetName
+      If (inTask) {
+         If (targetName = "explorer.exe") { ; was CabinetWClass for class
+            ; File explorer we use the shell to get the handles of type ShellTabWindowClass (win10/win11)
+            this.arrayTasks := Explorer.getTabHandles()
+         } Else {
+            wid_List := Array()
+            this.arrayTasks := Array()
+            If (WinExist(myHwnd)) {
+               EnumChildWindows(myHwnd, this.CWCB, 1)
+               ; If enum returned nothing, then look for same class and same PID
+               If (this.arrayTasks.Length = 0)
+                  wid_List := WinGetList("ahk_class " getClassName(myHwnd) " ahk_exe " targetName) ; Windows for same Class/PID Instance name as active
+               else
+                  Return myHwnd ; Found some children, done
+            } Else {
+               ; Window may have been closed, so just look at same process name
+               wid_List := WinGetList("ahk_exe " targetName) ; Windows for sameClass Instance name as active
             }
-            ; Loop over each window in Z-order and extract those we care about into arrayTasks
-            ; Looks like many non-candidates don't make it to the WinGetList (which is nice)
-            this.arrayTasks.Capacity := wid_List.Length
+            ; Filter list for valid candidates
+            ; this.arrayTasks.Capacity := wid_List.Length
             For loopHwnd in wid_List {
                If (isValidShellHookCandidate(loopHwnd)) {
-                  this.arrayTasks.push(loopHwnd)
+                  this.arrayTasks.Push(loopHwnd)
                }
             }
          }

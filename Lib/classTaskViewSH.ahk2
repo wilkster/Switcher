@@ -244,8 +244,8 @@ Class clsTaskView {
       ; This will only work if the active task is as intented
       ;----------------------------------------------------------------------------
       If (myHwnd = 0) {
-         myHwnd := WinActive("A")
-         targetName := WinGetProcessName(myHwnd)
+         if (myHwnd := WinActive("A"))
+            targetName := WinGetProcessName(myHwnd)
       }
       ; Kinda Hacky, explorer sibling won't work if the target window was killed so we
       ; need to pass in the targetName. However, on normal intask popups we use the 

@@ -106,24 +106,70 @@ PingWindow(hWnd, timeOut := 3000) {
 SetWindowLong(hWnd,opCode, Value) => DllCall("SetWindowLong", "int", hwnd, "int", opCode, "int", Value)
 GetWindowLong(hWnd,opCode) => DllCall("GetWindowLong", "Ptr", hWnd, "Uint", opCode, "Uint")
 
+
+/*
+   Window heirarchy options
+   - GetAncestor w/GA_PARENT Gets immediate parent window 
+   * GetAncestor w/GA_ROOT walks up the window parent chain only, good for midi
+
+   - GetWindow w/GW_OWNER Gets the immediate owner of the window  (unsed)
+   - GetWindow w/GW_OWNER in a loop comparing handlss to get the owning window (unused)
+
+   - GetParent to get the immediate parent or owner of the window.
+   - GetAncestor w/GA_ROOTOWNER to walk up the parent/owner chain to get the top level window until null is returned
+*/
+/*
+📌 What GetAncestor(hWnd, GA_PARENT) does
+Always returns the parent in the window hierarchy, and never the owner.
+It walks the parent chain instead of mixing in ownership.
+For windows without a parent, it can return the desktop window (because the desktop is technically the parent in the hierarchy).
+So GetAncestor(..., GA_PARENT) returns true parent, ignoring owner relationships.
+*/
+ImmediateParent(thisID) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", GA_PARENT, "Ptr")
+; Get the root of a window, may not be a toplevel window (more immediate up the chain than ROOTOWNER)
+; Retrieves the root window by walking the chain of *parent* windows.
+/*
+👍📌 GA_ROOT
+Walks only up the parent chain (ignores ownership).
+Stops at the root of the parent hierarchy — the topmost window reached by following GetParent(..., GA_PARENT) until there is no parent.
+This essentially returns:
+For child windows: the top-level window that contains them (i.e., a non-child ancestor).
+For top-level windows: the window itself (since it has no parent).
+GA_ROOT follows parent links only — it does not consider owner relationships.
+It would **stop at a dialog** if walking up from a control since the dialog is a top level window
+*/
+NextTopLevel(thisID) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", GA_ROOT, "Ptr")
+
+/*
+👍📌 What GetParent does
+Returns the parent window if the window is a child (i.e., WS_CHILD).
+If the window is top-level (no WS_CHILD), it returns the owner window instead.
+This means for owned pop-ups/dialogs it returns the owner, not just a structural parent.
+If there’s no parent and no owner, it returns NULL. - indicates a potential top level alt-tab candidate
+So GetParent returns parent or owner.
+*/
+ParentOrOwner(hWnd) => DllCall("User32.dll\GetParent", "Ptr", hWnd)
+/*
+📌 Get root owner of a window
+ GAROOTOWNER and GAROOT are both functions in the Win32 API that retrieve the root window by walking the chain of parent windows.
+ The difference between the two is that GA_ROOTOWNER guarantees that the returned value is a top-level window. 
+ Only top-level windows can be owners.
+ Retrieves the owned root window by walking the chain of *parent* and *owner* windows returned by GetParent. 
+ Works like GetParent by walking up the GetParent chain (either owner or parent)
+*/
+LastTopLevel(thisID) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", GA_ROOTOWNER, "Ptr")
+
+
+
+
 ; Change the owner of a window
 SetOwner(hwnd, newOwner) =>  DllCall("SetWindowLongPtr", "ptr", hwnd, "int", GWL_HWNDPARENT, "ptr", newOwner)
 GetAncestor(thisID, flags) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", flags, "Ptr")
-; Get root owner of a window
-; GAROOTOWNER and GAROOT are both functions in the Win32 API that retrieve the root window by walking the chain of parent windows.
-; The difference between the two is that GA_ROOTOWNER guarantees that the returned value is a top-level window. Only top-level windows can be owners.
-GetRootOwner(thisID) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", GA_ROOTOWNER, "Ptr")
-GetParentOnly(thisID) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", 1, "Ptr")
-; Get the root of a window, may not be a toplevel window (more immediate up the chain than ROOTOWNER)
-GetRoot(thisID) {
-   Try {
-      Return DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", GA_ROOT, "Ptr")
-   } Catch {
-      Return thisID
-   }
-}
+
+
+; Get the parent of this window
+; Retrieves the parent window. This does not include the owner, as it does with the GetParent function.
 ; Returns the parent window
-GetParent(hWnd) => DllCall("User32.dll\GetParent", "Ptr", hWnd)
 SwitchToThisWindow(hWnd, how := 1) => DllCall("User32.dll\SwitchToThisWindow", "Ptr", hWnd, "UInt", how)
 SetForegroundWindow(hWnd) => DllCall("User32.dll\SetForegroundWindow", "Ptr", hWnd)
 BringWindowToTop(hWnd) => DllCall("User32.dll\BringWindowToTop", "Ptr", hWnd)
@@ -514,7 +560,7 @@ getClassName(hWnd) {
 ;----------------------------------------------------------------------------
 isPrimaryOwner(hWnd) {
    ; Start at the root owner
-   hwndWalk := GetRootOwner(hWnd)  ;GetRootOwner
+   hwndWalk := LastTopLevel(hWnd)  ;GetRootOwner
    ; See if we are the last active visible popup
    hwndLastPU := 0
    While (hwndLastPU != (hwndTemp := GetLastActivePopup(hwndWalk))) {
@@ -997,7 +1043,7 @@ Class Explorer {
     * @returns {Array} array of control handles
     */
    Static activateTabHandle(tgtTabHwnd := 0) {
-      parent := GetParent(tgtTabHwnd)
+      parent := ParentOrOwner(tgtTabHwnd)
       tabCount := 0
       For objWindow in ComObject("Shell.Application").Windows {
          If (objWindow.name = "File Explorer") {

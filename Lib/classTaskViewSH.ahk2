@@ -332,7 +332,7 @@ Class clsTaskView {
    ; Some children should be considered parents for menu concerns
    ;----------------------------------------------------------------------------
    IsParentOverride(&targetWin, &ownerWin) {
-      owner := GetRoot(targetWin)  ; for MS Project, retuns the toplevel
+      owner := NextTopLevel(targetWin)  ; for MS Project, retuns the toplevel
       If (owner != targetWin) {
          If (WinExist("ahk_group ChildWindowClass ahk_id " owner)) {
             ; This will act on the parent window vs the child window in all cases for MS Project
@@ -398,7 +398,7 @@ Class clsTaskView {
       ; https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-switchtothiswindow
       ; SwitchToThisWindow may only be needed for toplevel windows
       ; First walk up the parent chain to see if this is a child window
-      myParent := GetRoot(hWnd)  ;GetRootOwner
+      myParent := NextTopLevel(hWnd)  ;GetRootOwner
       If (myParent = hWnd) {
          ; This is already a toplevel
          ; < 1ms to 10 ms normally
@@ -919,7 +919,7 @@ isValidShellHookCandidate(hWnd, skipDetail := false) {
          StyleOk	; Exclude ones with styles indicating not a valid toplevel
          AND DontIgnore(hWnd)	; MDI Clients, desktop, start menu related (search), Host UWP on other desktops
          AND (skipDetail OR winHasTitle(hWnd))	; Ignore windows with no title
-         AND GetParent(hWnd) = 0	; Ignore non-parent (use only top-level windows) windows  (use isPrimaryOwner??)
+         AND ParentOrOwner(hWnd) = 0	; Ignore non-parent (use only top-level windows) windows  (use isPrimaryOwner??)
          ; UWP host apps OR legit apps on a different desktop are both cloaked
          AND (skipDetail OR NotCloaked(hWnd) OR !vda.DtOnCurrent(hWnd))  ; needed for raw enum or shellhook, not needed for WinList
          ; Exclude start window artifcats or any MDI Clients that are replaced and UWP CoreWindow windows

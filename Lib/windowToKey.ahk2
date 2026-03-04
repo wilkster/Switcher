@@ -73,7 +73,7 @@ class windowToKey {
       ; Parent will be the same for top level windows
       ;onTopParent := GetParent(onTop)
       ; Get window root owner as default (not just root)
-      onTopParent := GetRootOwner(onTop)
+      onTopParent := LastTopLevel(onTop)
       ; Key => Handle
       this.keyMap[num]       := onTop
       this.keyMapParent[num] := onTopParent
@@ -92,7 +92,7 @@ class windowToKey {
          ; Grab active window, may be a mdi client
          onTop := this.myTV.winOnTop()
          ; Get window root owner as default (not just root)
-         onTopParent := GetRootOwner(onTop)
+         onTopParent := LastTopLevel(onTop)
          ; Key => Handle
          try {
             Debug("Remove Key=:'" num ", window=" hx(this.keyMap[num]))

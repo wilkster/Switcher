@@ -527,7 +527,7 @@ Class clsTaskGUI {
    ;----------------------------------------------------------------------------
    MonitorText(&monText, hWnd, isChild) {
 
-      Switch monInfo.MonitorDirection(isChild ? GetRoot(hWnd) : hWnd) {
+      Switch monInfo.MonitorDirection(isChild ? NextTopLevel(hWnd) : hWnd) {
          Case 0:
             monText := this.showDef ? "" : ""
             Return 0
@@ -555,7 +555,7 @@ Class clsTaskGUI {
       ; For children, make sure we test the top level parent  ↪【1】 〖1〗 http://xahlee.info/comp/unicode_matching_brackets.html
       mdt := 0
       ;GA_ROOT stops at the toplevel which is used for MDI children
-      hWnd := isChild ? GetRoot(hWnd) : hWnd
+      hWnd := isChild ? NextTopLevel(hWnd) : hWnd
       Switch vda.Locked[hWnd] {
          Case 0:
             vid := vda.DtID(hWnd)
@@ -760,7 +760,7 @@ Class clsTaskGUI {
             warning("Window Handle no longer exists - skipping")
             this.lvObj.Delete(rNum)
          }
-         ownerWin := GetRoot(hWnd)
+         ownerWin := NextTopLevel(hWnd)
          targetName := WinGetProcessName(ownerWin)
 
          ; Some of these actions will forece focus elsewhere so disable the timer for now
@@ -1309,7 +1309,7 @@ Class clsTaskGUI {
          ; SendMessage(Msg , wParam, , , WinTitle, , , , Timeout])
          winTitle := WinGetTitle(targetWin)
          ; debug("State=" Hex(TitleBarState(targetWin)))
-         debug("Owner=" WinGetClass(ownerWin) ", Target=" WinGetClass(targetWin))
+         ; debug("Owner=" WinGetClass(ownerWin) ", Target=" WinGetClass(targetWin))
          If (IsHungAppWindow(ownerWin)) {
             CloseMenu()
             Return (MsgBox("'" winTitle "' is hung and needs to be forcibly killed, Ok?", , "YesNo Owner" this.guiObj.hWnd) = "Yes") ? EndTask(ownerWin) : false
@@ -1324,7 +1324,8 @@ Class clsTaskGUI {
             ; Explorer tabs we just close the parent and only the tab closes unless it is the last tab
             Try {
                If (Explorer.activateTabHandle(targetWin)) {
-                  WinClose(GetParent(targetWin))
+                  if (PO := ParentOrOwner(targetWin))
+                     WinClose(PO)
                   Return true
                } Else {
                   TrayTip("Failed to activate tab")
@@ -1543,7 +1544,7 @@ Class clsTaskGUI {
          isChild := 1
          state := IsIconic(hWnd) ? monInfo.WIN_MIN : IsZoomed(hWnd) ? monInfo.WIN_MAX : monInfo.WIN_NORMAL
       } Else {
-         rtHwnd := GetRoot(hWnd) ; NOTE - does it matter if it is Root or RootOwner???
+         rtHwnd := NextTopLevel(hWnd) ; NOTE - does it matter if it is Root or RootOwner???
          state := WinGetMinMax(rtHwnd)	; -1 = minimized, 1 = maximized, 0 = normal
          If (rtHwnd != hWnd) {
             isChild := 1

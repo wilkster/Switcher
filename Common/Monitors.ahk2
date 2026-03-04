@@ -4,6 +4,7 @@
 #Include Constants.ahk2
 #Include dllFactory.ahk2            ; Common files, mostly dllcall window related
 #Include Structures.ahk2            ; Data Structures
+#Include WindowFunctions.ahk2
 #DllLoad "Dxva2.dll"
 #DllLoad "Shcore.dll"
 

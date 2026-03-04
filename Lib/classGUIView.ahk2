@@ -858,11 +858,9 @@ Class clsTaskGUI {
                   ttMsg("No Hotkey Currently Assigned")
 
             Case this.indexClose:
-               ; BUG - WIndows explorer owner window is the same as hWnd, and both are killed
-               ;       and thus a sibling/intask listview won't popolate with the remaining explorer windows
-               ;       owner, rootowner and hWnd are always the same value
                If (this.TryToCloseWindow(ownerWin, hWnd, "")) {
                   this.lvObj.Delete(rNum)
+                  Sleep(100) ; slight delay to allow things to settle
                } Else {
                   ; Failed to close app, GUI has been closed here
                   Return

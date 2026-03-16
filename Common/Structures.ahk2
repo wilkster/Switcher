@@ -23,6 +23,7 @@
 ; Adds ptr/size and ability to shift address for passed in structures
 ; NOTE - 2.1 Alpha 9 has the StructFromPtr command to allow dynmaic creation
 ; of the structure, so no need to have a recursive set function
+; TODO - Alpha 22 Class -> Struct
 ;----------------------------------------------------------------------
 Class baseStructure {
    __New() {
@@ -35,6 +36,7 @@ Class baseStructure {
          if (this.%p%.HasProp("__myStructures"))
             this.__myStructures.Push(p)
    }
+   ; TODO - Alhpha 22, these can be removed
    Size => ObjGetDataSize(this)
    ; Ptr Needed for the SendMessage call (Alpha 8)
    ; Also allows for recusrive shift in nested typed property classes

@@ -8,6 +8,7 @@
 
 #Requires AutoHotkey v2.0 
 #Include Constants.ahk2
+#Include Structures.ahk2
 #Include dllFactory.ahk2
 #Include StopWatch.ahk2
 #Include Monitors.ahk2

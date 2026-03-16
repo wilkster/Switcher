@@ -404,6 +404,7 @@ Class LV_Colors {
       ; StructFromPtr is the modern way to do this, but classes must be nested
       ; LData.Ptr := ptrNMLV
       ; 2.1 Alpha 9 capability to return object pointing to passed in address
+      ; TODO - Alpha 22, use  Ldata := stNMLVCUSTOMDRAW.At(ptrNMLV)
       Ldata := StructFromPtr(stNMLVCUSTOMDRAW, ptrNMLV)
       ; https://learn.microsoft.com/en-us/windows/win32/controls/cdrf-constants
       ; Paint Stages

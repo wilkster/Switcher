@@ -1,4 +1,4 @@
-#Requires AutoHotkey v2.1-a.9
+#Requires AutoHotkey v2.1-alpha.23
 #Include ..\common\dllFactory.ahk2
 #include ..\common\Structures.ahk2            ; Common structures used in 2.1 Alpha
 ; ======================================================================================================================

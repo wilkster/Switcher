@@ -1,101 +1,29 @@
+#Requires AutoHotkey v2.1-alpha.23
 /************************************************************************
  * @description Various Structures used throughout
  * @file Structures.ahk2
  * @author Tom Wilkason
  * @date 2024/02/17
- * @version 0.0.0
+ * @version 1.0.0
  ***********************************************************************/
-
-#Requires AutoHotkey >= v2.1-alpha.9
 #include dllFactory.ahk2
 /**** D A T A    T Y P E S
- *    i8, i16, i32 and i64 are signed integers, with i32 being 32-bit.
- *    u8, u16, u32 and u64 are unsigned integers, with u32 being 32-bit.
- *    iptr and uptr are integers; 32-bit when A_PtrSize = 4 and 64-bit when A_PtrSize = 8.
+ *    i8, i16, Int32 and i64 are signed integers, with Int32 being 32-bit.
+ *    UInt8, u16, UInt32 and u64 are unsigned integers, with UInt32 being 32-bit.
+ *    iptr and IntPtr are integers; 32-bit when A_PtrSize = 4 and 64-bit when A_PtrSize = 8.
  *    f32 and f64 are floating-point numbers.
- *    TODO - add clone method using CopyMemory dll call
- * 
  */
 ;----------------------------------------------------------------------
-; Custom Draw related structure passed in
+; Base Structure with common utility methods
 ;----------------------------------------------------------------------
-;----------------------------------------------------------------------
-; Adds ptr/size and ability to shift address for passed in structures
-; NOTE - 2.1 Alpha 9 has the StructFromPtr command to allow dynmaic creation
-; of the structure, so no need to have a recursive set function
-; TODO - Alpha 22 Class -> Struct
-;----------------------------------------------------------------------
-Class baseStructure {
-   __New() {
-      ; Save base address for each class instance based on this
-      this.__myBase := ObjGetDataPtr(this)
-      this.__myStructures := Array()
-      ; Save embedded structure names that have Ptr property in an array
-      ; Idea is enum on array is faster than enum/check props (which there can be a lot)
-      For p in this.Base.OwnProps()
-         if (this.%p%.HasProp("__myStructures"))
-            this.__myStructures.Push(p)
-   }
-   ; TODO - Alhpha 22, these can be removed
-   Size => ObjGetDataSize(this)
-   ; Ptr Needed for the SendMessage call (Alpha 8)
-   ; Also allows for recusrive shift in nested typed property classes
-   Ptr {
-      get => ObjGetDataPtr(this)
-   }
-   ; Object.Clone() does NOT make a copy of any structure data
-   ; Make a copy of this class struct fields (data) and its nested struct field classes 
-   ; Does NOT copy instance variable data, just the structure content.
-   ; NOTE -The nested structures are NOT contiguous in memory, therefore each has to be cloned (I think they may be contiguous)
-   ;       However, since ObjGetDataSize returns the size of the parent and children, the parent
-   ;       Strutures will copy more memory than needed.
-   ;       Good news is it doesn't seem to leak memory (blocks are reused and the extra memory is freed OK)
-   DeepClone() {
-      ; Create a new class instance
-      cCopy := %this.__Class%()
-      ; Debug(this.__Class " From Range:" ObjGetDataPtr(this) " to " ObjGetDataPtr(this) + ObjGetDataSize(this))
-      ; Debug(this.__Class " To Range:" ObjGetDataPtr(cCopy) " to " ObjGetDataPtr(cCopy) + ObjGetDataSize(this))
-      ; Copy over the struct field data
-      DllCall("RtlCopyMemory","Ptr",ObjGetDataPtr(cCopy),"Ptr",ObjGetDataPtr(this),"Ptr",ObjGetDataSize(this))
-      ; Recurse through each of the children classes struct fields
-      for p in this.__myStructures {
-         this.%p%.Clone()
-      }
-      return cCopy
-   }
-   ; Copy only the contents of a structure to a target the same size
-   ; Does not recurse
-   ; TODO - I think we don't need to recurse, structures should be contiguous if declared that way
+Struct baseStructure {
    CopyTo(objTarget) {
       ; Don't necessarly need the propery names to match, but they have to be the same size
-      if (ObjGetDataSize(this) > 0 AND ObjGetDataSize(objTarget) = ObjGetDataSize(this)) {
-         DllCall("RtlCopyMemory", "Ptr", ObjGetDataPtr(objTarget), "Ptr", ObjGetDataPtr(this), "Ptr", ObjGetDataSize(this))
-         for p in this.__myStructures {
-            ; Target must have same structure names for this to work
-            if (objTarget.HasOwnProp(p)) {
-               this.%p%.CopyTo(objTarget.%p%)
-            } else {
-               Warning("Ignoring " this.__Class "." p " since it doesn't exist on target")
-            }
-         }
+      if (this.Size > 0 AND objTarget.Size = this.Size) {
+         DllCall("RtlCopyMemory", "Ptr", objTarget.Ptr, "Ptr", this.Ptr, "Uint", this.Size)
          Return 1
       } else  {
-         Throw(ValueError("Object Size Mismatch on " this.__Class, -1, objTarget.__Class))
-      }
-   }
-   DumpProperties(Desc) {
-      debug(Desc)
-      For p in this.Base.OwnProps() {
-         If (p != "__Class") {
-            If (this.%p%.HasMethod("DumpProperties"))
-               this.%p%.DumpProperties(Desc "." p)
-            Else
-               Try debug(" " this.__Class "." p "=" this.%p%)
-
-         }
-         ; For t, v in this.base.GetOwnPropDesc(p).OwnProps() {
-         ;    debug("   t=" t " IsObject=" (v is Object))
-         ; }
+         Error("Object Size Mismatch on " this.__Class, -1, objTarget.__Class)
       }
    }
 }
@@ -104,8 +32,7 @@ Class baseStructure {
 https://stackoverflow.com/questions/72243620/nmhdr-definition-conflict
 typedef struct tagNMHDR { from winuser.h
   HWND     hwndFrom;
-  UINT_PTR idFrom;
-  UINT     code;
+  UINT_PTR idFrom;5  UINT     code;
   nweed pad for next ptr
 } NMHDR;
 
@@ -138,19 +65,19 @@ typedef struct tagNMLVCUSTOMDRAW {
 ;----------------------------------------------------------------------
 ; Complicated nested structures for listview custom drawing
 ;----------------------------------------------------------------------
-Class stNMHDR extends baseStructure {
-   hwndFrom: uptr ; A window handle to the control sending the message. cls.nmc.nmhdr.hwndFrom
-   idFrom: uptr   ; An identifier of the control sending the message.
-   code: u32      ; A notification code. (NM_CUSTOMDRAW = -12)
+Struct stNMHDR extends baseStructure {
+   hwndFrom: IntPtr ; A window handle to the control sending the message. cls.nmc.nmhdr.hwndFrom
+   idFrom  : IntPtr   ; An identifier of the control sending the message.
+   code    : UInt32      ; A notification code. (NM_CUSTOMDRAW = -12)
 }
-Class stNMCUSTOMDRAW extends baseStructure {
+Struct stNMCUSTOMDRAW extends baseStructure {
    nmhdr      : stNMHDR   ; adjusts for needed padding
-   dwDrawStage: u32       ; Need to determine stage
-   hdc        : uptr      ; Can use to select a font into to change it
+   dwDrawStage: UInt32       ; Need to determine stage
+   hdc        : IntPtr      ; Can use to select a font into to change it
    rc         : stRECT
-   dwItemSpec : uptr      ; Need, Row Number (0 based)
-   uItemState : u32       ; Need, to adjust state
-   lItemlParam: uptr      ; Application Specific (unused)
+   dwItemSpec : IntPtr      ; Need, Row Number (0 based)
+   uItemState : UInt32       ; Need, to adjust state
+   lItemlParam: IntPtr      ; Application Specific (unused)
 
 }
 ;----------------------------------------------------------------------
@@ -158,20 +85,20 @@ Class stNMCUSTOMDRAW extends baseStructure {
 ; Whole thing is 136 bytes on win64
 ; https://learn.microsoft.com/en-us/windows/win32/api/commctrl/ns-commctrl-nmlvcustomdraw
 ;----------------------------------------------------------------------
-Class stNMLVCUSTOMDRAW extends baseStructure {
+Struct stNMLVCUSTOMDRAW extends baseStructure {
    nmc      : stNMCUSTOMDRAW
-   clrText  : U32       ; Need, text foreground color
-   clrTextBk: U32       ; Need, text background color
-   iSubItem : i32       ; Need, Col, ignore the rest
+   clrText  : UInt32       ; Need, text foreground color
+   clrTextBk: UInt32       ; Need, text background color
+   iSubItem : Int32       ; Need, Col, ignore the rest
    ; Control Version 6.0+ below, unused don't think they work here
-   dwItemType : U32     ; DWORD that contains the type of the item to draw. This member can be one of the following values.
-   clrFace    : U32     ; COLORREF value representing the color that will be used to display the face of an item.
-   iIconEffect: I32     ; Value of type int that specifies the effect that is applied to an icon, such as Glow, Shadow, or Pulse. Non-Report view I think
-   iIconPhase : I32
-   iPartId    : I32
-   iStateId   : I32
+   dwItemType : UInt32     ; DWORD that contains the type of the item to draw. This member can be one of the following values.
+   clrFace    : UInt32     ; COLORREF value representing the color that will be used to display the face of an item.
+   iIconEffect: Int32     ; Value of type int that specifies the effect that is applied to an icon, such as Glow, Shadow, or Pulse. Non-Report view I think
+   iIconPhase : Int32
+   iPartId    : Int32
+   iStateId   : Int32
    rcText     : stRECT ; RECT that specifies the rectangle in which the text is to be drawn.
-   uAlign     : U32
+   uAlign     : UInt32
 }
 /*
 typedef struct tagLVITEMA {
@@ -192,31 +119,31 @@ typedef struct tagLVITEMA {
   int    iGroup;
 } LVITEMA, *LPLVITEMA;
 */
-Class stLVITEM extends baseStructure {
-  mask      : u32
-  iItem     : I32
-  iSubItem  : I32
-  state     : u32
-  stateMask : u32
-  pszText   : uPtr
-  cchTextMax: i32
-  iImage    : i32
-  lParam    : uptr
-  iIndent   : i32
-  iGroupId  : i32
-  cColumns  : u32
-  puColumns : uPtr
-  piColFmt  : uPtr
-  iGroup    : i32
+Struct stLVITEM extends baseStructure {
+  mask      : UInt32
+  iItem     : Int32
+  iSubItem  : Int32
+  state     : UInt32
+  stateMask : UInt32
+  pszText   : IntPtr
+  cchTextMax: Int32
+  iImage    : Int32
+  lParam    : IntPtr
+  iIndent   : Int32
+  iGroupId  : Int32
+  cColumns  : UInt32
+  puColumns : IntPtr
+  piColFmt  : IntPtr
+  iGroup    : Int32
 }
 ;----------------------------------------------------------------------
 ; RECT structure
 ;----------------------------------------------------------------------
-Class stRECT extends baseStructure {
-   left  : i32
-   top   : i32
-   right : i32
-   bottom: i32
+Struct stRECT extends baseStructure {
+   left  : Int32
+   top   : Int32
+   right : Int32
+   bottom: Int32
    ; Helper properties
    width {
       get =>(this.right   - this.left)
@@ -240,41 +167,41 @@ Class stRECT extends baseStructure {
 ;----------------------------------------------------------------------
 ; X/Y mouse point
 ;----------------------------------------------------------------------
-Class stPOINT extends baseStructure {
-   x: i32
-   y: i32
+Struct stPOINT extends baseStructure {
+   x: Int32
+   y: Int32
 }
 ;----------------------------------------------------------------------
 ; Structure returned by listview hittest
 ;----------------------------------------------------------------------
-Class LVHITTESTINFO extends baseStructure {
+Struct LVHITTESTINFO extends baseStructure {
    Pos   : stPOINT
-   flags : U32
-   Row   : I32
-   Col   : I32
-   iGroup: I32
+   flags : UInt32
+   Row   : Int32
+   Col   : Int32
+   iGroup: Int32
 }
 ; class stMONITORINFO {
-;    cbSize : i32 := ObjGetDataSize(this)
+;    cbSize : Int32 := ObjGetDataSize(this)
 ;    rcMonitor : stRECT
 ;    rcWork : stRECT
-;    dwFlags : i32
+;    dwFlags : Int32
 ; }
-Class stMONITORINFOEX extends baseStructure {
-   cbSize   : i32 := ObjGetDataSize(this)
+Struct stMONITORINFOEX extends baseStructure {
+   cbSize   : Int32 := ObjGetDataSize(this)
    rcMonitor: stRECT
    rcWork   : stRECT
-   dwFlags  : i32
+   dwFlags  : Int32
    _name    : 64
    name => StrGet(this._name, 64)
 }
 ; https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-display_devicea
 ; WCHAR is used since this is unicode
-Class stDISPLAY_DEVICE extends baseStructure {
-   cb           : i32 := ObjGetDataSize(this)
+Struct stDISPLAY_DEVICE extends baseStructure {
+   cb           : Int32 := ObjGetDataSize(this)
    _DeviceName  : 64
    _DeviceString: 256
-   StateFlags   : u32   ; -> indicates if the device is connected to an active monitor DISPLAY_DEVICE_ACTIVE=0x001 & DISPLAY_DEVICE_PRIMARY_DEVICE=0x100
+   StateFlags   : UInt32   ; -> indicates if the device is connected to an active monitor DISPLAY_DEVICE_ACTIVE=0x001 & DISPLAY_DEVICE_PRIMARY_DEVICE=0x100
    _DeviceID    : 256
    _DeviceKey   : 256
    DeviceName   => StrGet(this._DeviceName, 64)    ; \\.\DISPLAY1
@@ -296,10 +223,10 @@ https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-windowpla
 Uses workspace coordinates vs screen coordinates
 */
 
-Class stWINDOWPLACEMENT extends baseStructure {
-   length          : u32 := ObjGetDataSize(this)
-   flags           : u32     ; The flags that control the position of the minimized window and the method by which the window is restored
-   showCmd         : u32     ; The current show state of the window
+Struct stWINDOWPLACEMENT extends baseStructure {
+   length          : UInt32 := ObjGetDataSize(this)
+   flags           : UInt32     ; The flags that control the position of the minimized window and the method by which the window is restored
+   showCmd         : UInt32     ; The current show state of the window
    ptMinPosition   : stPOINT ; The coordinates of the window's upper-left corner when the window is minimized.
    ptMaxPosition   : stPOINT ; The coordinates of the window's upper-left corner when the window is maximized.
    rcNormalPosition: stRECT  ; The window's coordinates when the window is in the restored position.
@@ -318,15 +245,15 @@ typedef struct tagGUITHREADINFO {
    RECT  rcCaret;
  } GUITHREADINFO, *PGUITHREADINFO, *LPGUITHREADINFO;
 */
-Class stGUITHREADINFO extends baseStructure {
-   cbSize       : u32 := ObjGetDataSize(this)
-   flags        : u32
-   hwndActive   : uptr
-   hwndFocus    : uptr
-   hwndCapture  : uptr
-   hwndMenuOwner: uptr
-   hwndMoveSize : uptr
-   hwndCaret    : uptr
+Struct stGUITHREADINFO extends baseStructure {
+   cbSize       : UInt32 := ObjGetDataSize(this)
+   flags        : UInt32
+   hwndActive   : IntPtr
+   hwndFocus    : IntPtr
+   hwndCapture  : IntPtr
+   hwndMenuOwner: IntPtr
+   hwndMoveSize : IntPtr
+   hwndCaret    : IntPtr
    rcCaret      : stRECT
 }
 /*
@@ -348,20 +275,20 @@ HFONT CreateFontA(
   lfHeight = -MulDiv(PointSize, GetDeviceCaps(hDC, LOGPIXELSY), 72); to convert points -> lfHeight
   PointSize := DllCall("MulDiv","int",PointSize,"int",GetDeviceCaps(hDC, LOGPIXELSY),"int",72)
 */
-Class stHFONT extends baseStructure {
-   cHeight        : i32
-   cWidth         : i32
-   cEscapement    : i32
-   cOrientation   : i32
-   cWeight        : i32
-   bItalic        : u8
-   bUnderline     : u8
-   bStrikeOut     : u8
-   iCharSet       : u8
-   iOutPrecision  : u8
-   iClipPrecision : u8
-   iQuality       : u8
-   iPitchAndFamily: u8
+Struct stHFONT extends baseStructure {
+   cHeight        : Int32
+   cWidth         : Int32
+   cEscapement    : Int32
+   cOrientation   : Int32
+   cWeight        : Int32
+   bItalic        : UInt8
+   bUnderline     : UInt8
+   bStrikeOut     : UInt8
+   iCharSet       : UInt8
+   iOutPrecision  : UInt8
+   iClipPrecision : UInt8
+   iQuality       : UInt8
+   iPitchAndFamily: UInt8
    _pszFaceName   : 32
    pszFaceName    => StrGet(this._pszFaceName, 32)
    ; Translate Points to char height
@@ -383,7 +310,7 @@ typedef struct tagMINMAXINFO {
 } MINMAXINFO, *PMINMAXINFO, *LPMINMAXINFO;
 */
 
-Class stMINMAXINFO extends baseStructure {
+Struct stMINMAXINFO extends baseStructure {
    ptReserved    : stPOINT
    ptMaxSize     : stPOINT
    ptMaxPosition : stPOINT

@@ -404,8 +404,11 @@ Class LV_Colors {
       ; StructFromPtr is the modern way to do this, but classes must be nested
       ; LData.Ptr := ptrNMLV
       ; 2.1 Alpha 9 capability to return object pointing to passed in address
-      ; TODO - Alpha 22, use  Ldata := stNMLVCUSTOMDRAW.At(ptrNMLV)
-      Ldata := StructFromPtr(stNMLVCUSTOMDRAW, ptrNMLV)
+      ; NOTE - Alpha 22, use  Ldata := stNMLVCUSTOMDRAW.At(ptrNMLV)
+      If !(this.HWND) || (hLV.hWnd != this.HWND) {
+         Return CDRF_DODEFAULT
+      }
+      ; Ldata := StructFromPtr(stNMLVCUSTOMDRAW, ptrNMLV)
       ; https://learn.microsoft.com/en-us/windows/win32/controls/cdrf-constants
       ; Paint Stages
       Static CDDS_PREPAINT         := 0x01
@@ -424,9 +427,7 @@ Class LV_Colors {
       Static LVM_GETSUBITEMRECT     := 0x1038 ; unicode
       Static LVM_GETITEMTEXT        := 0x1073 ; unicode version
       
-      If !(this.HWND) || (hLV.hWnd != this.HWND) {
-         Return CDRF_DODEFAULT
-      }
+      Ldata := stNMLVCUSTOMDRAW.At(ptrNMLV)
       ; 0 based data returned for row/col
       Row := Ldata.nmc.dwItemSpec + 1
       Col := Ldata.iSubItem + 1
@@ -505,11 +506,14 @@ Class LV_Colors {
                   myGDI.SelectObject(Ldata.nmc.hdc, this.defFont)  ; impacting the reset of the cols in this row as well
                }
             }
+            Ldata := ""
             Return CDRF_DODEFAULT
          Case CDDS_SUBITEMPOSTPAINT: ; Phase 4 - not currently needed for any post drawing stuff
+            Ldata := ""
             Return CDRF_DODEFAULT ; docs say return CDRF_NEWFONT if something changed
          Default:
             ; debug(hex(DrawStage) ", Default Row=" Row ", Col=" Col)
+            Ldata := ""
             Return CDRF_DODEFAULT
       }
       /*****

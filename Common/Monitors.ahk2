@@ -65,7 +65,7 @@ Class monInfo {
    ;----------------------------------------------------------------------------
    Static MonitorEnumProc(hMonitor, hDC, pRECT, userParam) {
       Static MDT_EFFECTIVE_DPI := 0
-      Static stDispInfo        := stDISPLAY_DEVICE()
+      ; Static stDispInfo        := stDISPLAY_DEVICE()
       Static stMonInfo         := stMONITORINFOEX()
       Static GetMonitorInfo    := GetModHandle("GetMonitorInfoW", "User32.dll")
       Static GetDpiForMonitor  := GetModHandle("GetDpiForMonitor", "Shcore.dll")

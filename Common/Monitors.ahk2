@@ -65,15 +65,10 @@ Class monInfo {
    ;----------------------------------------------------------------------------
    Static MonitorEnumProc(hMonitor, hDC, pRECT, userParam) {
       Static MDT_EFFECTIVE_DPI := 0
-      ; Static stDispInfo        := stDISPLAY_DEVICE()
-      Static stMonInfo         := stMONITORINFOEX()
-      Static GetMonitorInfo    := GetModHandle("GetMonitorInfoW", "User32.dll")
-      Static GetDpiForMonitor  := GetModHandle("GetDpiForMonitor", "Shcore.dll")
-
       ; Get upper left/top coordinates for each monitor
       ; Used to compare relative position of monitors
       ; This should start with the primary monitor and work out
-      If (DllCall(GetMonitorInfo, "ptr", hMonitor, "ptr", stMonInfo)) {
+      If (DllCall("User32.dll\GetMonitorInfo", "ptr", hMonitor, stMONITORINFOEX.Ptr, &stMonInfo)) {
          mnInfo := Object()
          ; Need to compare monitor locations
          mnInfo.mLeft   := stMonInfo.rcMonitor.left
@@ -96,7 +91,7 @@ Class monInfo {
          ; Name           = \\.\DISPLAY1 -> 1, same as stDISPLAY_DEVICE.DeviceName
          mnInfo.Index  := RegExReplace(mnInfo.Name, ".*(\d+)$", "$1")
          ; Get the real DPI of this monitor, used to set icon/font size during launch
-         DllCall(GetDpiForMonitor, "Ptr", hMonitor, "UInt", MDT_EFFECTIVE_DPI, "Ptr*", &dpiX := 0, "Ptr*", &dpiY := 0)
+         DllCall("Shcore.dll\GetDpiForMonitor", "Ptr", hMonitor, "UInt", MDT_EFFECTIVE_DPI, "Int*", &dpiX := 0, "Int*", &dpiY := 0)
          mnInfo.DPI := Round(Sqrt(dpiX * dpiY))
          ; Dynamic rato/scale (used to scale margin)
          mnInfo.ratio := mnInfo.DPI / A_ScreenDPI
@@ -159,12 +154,10 @@ Class monInfo {
    ; Returns 0,1,2 ... based on monitor ID
    ;----------------------------------------------------------------------------
    Static getMonitorUnderMouse() {
-      ; NOTE - using module handle is about 10% faster, but bot are 10us per dual call
-      Static GetCursorPos := GetModHandle("GetCursorPos", "User32.dll")
-      Static MonitorFromPoint := GetModHandle("MonitorFromPoint", "User32.dll")
-
-      DllCall(GetCursorPos, "uint64*", &POINT := 0)
-      hMon := DllCall(MonitorFromPoint, "int64", POINT, "uint", 0)   ; flag to return primary monitor on failure
+      DllCall("User32\GetCursorPos", "uint64*", &POINT:=0)
+      ; Get Monitor under cursor pack a POINT structure
+      hMon := DllCall("User32\MonitorFromPoint", "Int64", POINT, "UInt", 0, "Ptr")
+      ; hMon := DllCall("User32\MonitorFromPoint", "uint64*", &POINT, UInt32, 0, IntPtr)
       Return hMon
    }
    ;----------------------------------------------------------------------
@@ -516,19 +509,16 @@ Class dxva2 {
    ; NOTE - User Must destroy the handle when done with it externally
    ;----------------------------------------------------------------------
    Static getPhysMonitorsInfo(hMon) {
-      Static GetNumberOfPhysicalMonitorsFromHMONITOR := GetModHandle("GetNumberOfPhysicalMonitorsFromHMONITOR", "Dxva2.dll")
-      Static GetPhysicalMonitorsFromHMONITOR         := GetModHandle("GetPhysicalMonitorsFromHMONITOR", "Dxva2.dll")
-
       pmInfo := Object()
       ;https://www.autohotkey.com/boards/viewtopic.php?f=83&t=103415
-      If (DllCall(GetNumberOfPhysicalMonitorsFromHMONITOR, "ptr", hMon, "uint*", &numPhyMon := 0, "Int")) {
+      If (DllCall("Dxva2.dll\GetNumberOfPhysicalMonitorsFromHMONITOR", "ptr", hMon, "uint*", &numPhyMon := 0, "Int")) {
          ; Get Physical Monitor from handle
          bufPhyMon := Buffer((A_PtrSize + 256) * numPhyMon, 0)
-         If (hPhysicalMonitor := DllCall(GetPhysicalMonitorsFromHMONITOR, "Ptr", hMon, "uint", numPhyMon, "Ptr", bufPhyMon.Ptr, "Int")) {
+         If (DllCall("Dxva2.dll\GetPhysicalMonitorsFromHMONITOR", "Ptr", hMon, "uint", numPhyMon, "Ptr", bufPhyMon.Ptr, "Int")) {
             ; Handles are 0 based ... 0,1,2,...
             ; NOTE - Just getting the 1st physical monitor
             pmInfo.pHandle := NumGet(bufPhyMon.Ptr, 0, "Ptr")
-            pmInfo.Name    := StrGet(bufPhyMon.Ptr + A_PtrSize, 200)
+            pmInfo.Name    := StrGet(bufPhyMon.Ptr + A_PtrSize, 128, "UTF-16") ; up to 128 wchar
             pmInfo.Count   := numPhyMon
             pmInfo.ptrBase := bufPhyMon.Ptr
             Return pmInfo

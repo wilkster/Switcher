@@ -229,8 +229,7 @@ MaxWinNoActivate(hWnd) {
 }
 
 DumpWindowCoords(hWnd) {
-   static wp:= stWINDOWPLACEMENT()
-   DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", wp.Ptr)
+   DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, stWINDOWPLACEMENT.Ptr, &wp)
    state := wp.showCmd	;showCmd
    debug("Window:" WinGetTitle(hWnd) ", state=" hex(state) ", flags=" hex(wp.flags))
    debug(" rcNormalPosition=" wp.rcNormalPosition.Left " " wp.rcNormalPosition.Right " " wp.rcNormalPosition.Top " " wp.rcNormalPosition.Bottom)
@@ -243,8 +242,7 @@ DumpWindowCoords(hWnd) {
 ; https://devblogs.microsoft.com/oldnewthing/20100412-00/?p=14353
 ;----------------------------------------------------------------------
 GetWindowPlacementBuf(hWnd) {
-   buf := stWINDOWPLACEMENT()
-   DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", buf.ptr)
+   DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, stWINDOWPLACEMENT.Ptr, &buf)
    return buf
 }
 GetWindowPlacement(hWnd, buf) => DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", buf)
@@ -678,7 +676,7 @@ ChangeWindowAnimation(hWnd,how) {
    DllCall("dwmapi\DwmSetWindowAttribute"
    , "Ptr", hWnd
    , "UInt", DWMWA_TRANSITIONS_FORCEDISABLED
-   , "Int*", how
+   , "Int*", &how
    , "UInt", 4)
    ; DllCall("dwmapi\DwmSetWindowAttribute"
    ; , "Ptr", hWnd
@@ -700,7 +698,7 @@ Round11Corners(hWnd, how := 2) {
    DllCall("dwmapi\DwmSetWindowAttribute"
       , "Ptr", hWnd
       , "UInt", DWMWA_WINDOW_CORNER_PREFERENCE
-      , "Int*", howRound
+      , "Int*", &howRound
       , "UInt", 4)
 
 }

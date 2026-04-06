@@ -207,7 +207,7 @@ GetWindowThreadProcessId(hWnd) {
 getFocusWindow(hWnd) {
    st := stGUITHREADINFO()
    p := DllCall("GetWindowThreadProcessId", "Ptr", hWnd, "int*", &pid := 0)
-   If DllCall("GetGUIThreadInfo", "Uint", p, "Ptr", st) {
+   If DllCall("User32.dll\GetGUIThreadInfo", "Uint", p, "Ptr", st) {
       Return st.hwndFocus
    } Else {
       Warning("GetGUIThreadInfo " A_LastError)
@@ -286,20 +286,24 @@ Class myGDI {
    ;----------------------------------------------------------------------
    ; The FillRgn function fills a region by using the specified brush.
    ;----------------------------------------------------------------------
-   Static GetBkColor(hdc) => DllCall("Gdi32.dll\GetBkColor", "Ptr", hdc, "uint")
+   Static GetBkColor(hdc)               => DllCall("Gdi32.dll\GetBkColor", "Ptr", hdc, "uint")
    Static FillRgn(hdc, rgnMain, hBrush) => DllCall("Gdi32.dll\FillRgn", "Ptr", hdc, "Ptr", rgnMain, "Ptr", hBrush)
-   Static CreateSolidBrush(rgbColor) => DllCall("Gdi32.dll\CreateSolidBrush", "uint", rgbColor)
-   Static GetSysColorBrush(index) => DllCall("User32.dll\GetSysColorBrush", "uint", index)
-   Static CreateSolidPen(Width, Color) => DllCall("Gdi32\CreatePen", "Uint", 0, "Uint", Width, "Uint", Color)
-   Static FillRect(hdc, pRect, hBrush) => DllCall("User32\FillRect", "Ptr", hdc, "ptr", pRect, "Ptr", hBrush, "Int")
+   Static CreateSolidBrush(rgbColor)    => DllCall("Gdi32.dll\CreateSolidBrush", "uint", rgbColor)
+   Static GetSysColorBrush(index)       => DllCall("User32.dll\GetSysColorBrush", "uint", index)
+   Static CreateSolidPen(Width, Color)  => DllCall("Gdi32\CreatePen", "Uint", 0, "Uint", Width, "Uint", Color)
+   Static FillRect(hdc, pRect, hBrush)  => DllCall("User32\FillRect", "Ptr", hdc, "ptr", pRect, "Ptr", hBrush, "Int")
    ; TODO - https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createfontw
-   Static SelectObject(hDC, hObject) => DllCall("SelectObject", "Ptr", hDC, "Ptr", hObject)
+   Static SelectObject(hDC, hObject) => DllCall("Gdi32.dll\SelectObject", "Ptr", hDC, "Ptr", hObject)
    Static GetTempWindowRgn(hWnd, &hRgnNew) {
       hRgn := myGDI.CreateRectRgn(0, 0, 0, 0)
       ; The GetWindowRgn function obtains a copy of the window region of a window
       Result := myGDI.GetWindowRgn(hWnd, hRgn)
-      hRgnNew := Result ? hRgn : 0
-      Return Result
+      if (Result)
+         return hRgn
+      Else {
+         myGDI.DeleteObject(hRgn)
+         Return 0
+      }
    }
    Static GetWindowRgn(hWnd, hRgn) => DllCall("User32.dll\GetWindowRgn", "Ptr", hWnd, "Ptr", hRgn, "Int")
    ;----------------------------------------------------------------------
@@ -502,34 +506,6 @@ WorkstationIsUnLocked() => DllCall("User32\OpenInputDesktop", "uint", 0, "uint",
 OSVersion() => StrSplit(A_OSVersion, ".")[3] < 22000 ? 10 : 11
 ; WinVersion() => StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
 
-/*----------------------------------------------------------------------------\
- Force the computer to sleep
- This can more easily be done with a com object
-\----------------------------------------------------------------------------*/
-; StandBy() {
-;    ;enable SeShutdownPrivilege token
-;    Static SE_PRIVILEGE_ENABLED := 2
-;    PID := ProcessExist()
-;    ; Get the handle of this script with PROCESS_QUERY_INFORMATION (0x0400):
-;    hProcess := DllCall("OpenProcess", "UInt", 0x0400, "Int", false, "UInt", PID, "Ptr")
-;    ; Open an adjustable access token with this process (TOKEN_ADJUST_PRIVILEGES = 32):
-;    DllCall("Advapi32.dll\OpenProcessToken", "Ptr", hProcess, "UInt", 32, "Ptr*", &tProcess := 0)
-;    ; VarSetCapacity(ti, 16, 0)  ; structure of privileges
-;    privBuffer := Buffer(16, 0)  ; structure of privileges
-;    NumPut("UInt", 1, privBuffer, 0)  ; one entry in the privileges array...
-;    ; Retrieves the locally unique identifier of the privilege:
-;    DllCall("Advapi32.dll\LookupPrivilegeValue", "Ptr", 0, "Str", "SeShutdownPrivilege", "Int64*", &privVal := 0)
-;    NumPut("Int64", privVal, privBuffer, 4)
-;    NumPut("UInt", SE_PRIVILEGE_ENABLED, privBuffer, 12)  ; Enable this privilege: SE_PRIVILEGE_ENABLED = 2
-;    ; Update the privileges of this process with the new access token:
-;    r := DllCall("Advapi32.dll\AdjustTokenPrivileges", "Ptr", tProcess, "Int", false, "Ptr", privBuffer
-;       , "UInt", 0, "Ptr", 0, "Ptr", 0)
-;    DllCall("CloseHandle", "Ptr", tProcess)  ; Close this access token handle to save memory.
-;    DllCall("CloseHandle", "Ptr", hProcess)  ; Close this process handle to save memory.
-
-;    ;PC standby (S3)
-;    DllCall("ntdll\ZwInitiatePowerAction", "Int", 2, "Int", 4, "Int", 0x80000000, "Int", 1)
-; }
 ;--------------------------------------------------------------
 ; Return compacted RGB word as a text string
 ;--------------------------------------------------------------
@@ -612,7 +588,7 @@ NormalizePath(path) {
    cc := DllCall("GetFullPathName", "str", path, "uint", 0, "ptr", 0, "ptr", 0, "uint")
    buf := Buffer(cc * 2)
    DllCall("GetFullPathName", "str", path, "uint", cc, "ptr", buf, "ptr", 0)
-   Return StrGet(buf)
+   Return StrGet(buf, cc, "UTF-16")
 }
 ;============================================================================
 ; Common routines, used by classes for debugging
@@ -689,78 +665,5 @@ isMashed(to) {
    Return false
 }
 isRepeat(to) => (A_ThisHotkey = A_PriorHotkey) AND (A_TimeSincePriorHotkey < to)
-/**
- * Ordered map class that maintains the order of items added
- * @param {number} 
- * @returns {number} 
- */
-Class Dict extends Map {
-   __New(KVPairs*) {
-      super.__New(KVPairs*)
-      KeyArray := []
-      keyCount := KVPairs.Length // 2
-      KeyArray.Length := keyCount
-      Loop keyCount
-         KeyArray[A_Index] := KVPairs[(A_Index << 1) - 1]
-      this.KeyArray := KeyArray
-   }
 
-   __Item[key] {
-      set {
-         If !this.Has(key)
-            this.KeyArray.Push(key)
-         super[key] := Value
-      }
-   }
-
-   Clear() {
-      super.Clear()
-      this.KeyArray := []
-   }
-
-   Clone() {
-      Other := super.Clone()
-      Other.KeyArray := this.KeyArray.Clone()
-      Return Other
-   }
-
-   Delete(key) {
-      Try {
-         RemovedValue := super.Delete(key)
-         CaseSense := this.CaseSense
-         For i, Element in this.KeyArray {
-            areSame := (Element is String)
-               ? !StrCompare(Element, key, CaseSense)
-               : (Element = key)
-            If areSame {
-               this.KeyArray.RemoveAt(i)
-               Break
-            }
-         }
-         Return RemovedValue
-      } Catch UnsetItemError As Err
-         throw UnsetItemError(Err.Message, -1, Err.Extra)
-   }
-
-   Set(KVPairs*) {
-      If (KVPairs.Length & 1)
-         throw ValueError('Invalid number of parameters.', -1)
-      KeyArray := this.KeyArray
-      keyCount := KVPairs.Length // 2
-      KeyArray.Capacity += keyCount
-      Loop keyCount {
-         key := KVPairs[(A_Index << 1) - 1]
-         this.Has(key) || KeyArray.Push(key)
-      }
-      super.Set(KVPairs*)
-      Return this
-   }
-
-   __Enum(*) {
-      keyEnum := this.KeyArray.__Enum(1)
-      Return (&key?, &val?) => (
-         keyEnum(&key) ? (val := this[key], true) : false
-      )
-   }
-}
 dlog("Include File Loaded")

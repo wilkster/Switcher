@@ -182,13 +182,13 @@ Struct LVHITTESTINFO extends baseStructure {
    iGroup: Int32
 }
 ; class stMONITORINFO {
-;    cbSize : Int32 := ObjGetDataSize(this)
+;    cbSize : Int32 := this.Size
 ;    rcMonitor : stRECT
 ;    rcWork : stRECT
 ;    dwFlags : Int32
 ; }
 Struct stMONITORINFOEX extends baseStructure {
-   cbSize   : Int32 := ObjGetDataSize(this)
+   cbSize   : Int32 := this.Size
    rcMonitor: stRECT
    rcWork   : stRECT
    dwFlags  : Int32
@@ -198,7 +198,7 @@ Struct stMONITORINFOEX extends baseStructure {
 ; https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-display_devicea
 ; WCHAR is used since this is unicode
 Struct stDISPLAY_DEVICE extends baseStructure {
-   cb           : Int32 := ObjGetDataSize(this)
+   cb           : Int32 := this.Size
    _DeviceName  : 64
    _DeviceString: 256
    StateFlags   : UInt32   ; -> indicates if the device is connected to an active monitor DISPLAY_DEVICE_ACTIVE=0x001 & DISPLAY_DEVICE_PRIMARY_DEVICE=0x100
@@ -224,7 +224,7 @@ Uses workspace coordinates vs screen coordinates
 */
 
 Struct stWINDOWPLACEMENT extends baseStructure {
-   length          : UInt32 := ObjGetDataSize(this)
+   length          : UInt32 := this.Size
    flags           : UInt32     ; The flags that control the position of the minimized window and the method by which the window is restored
    showCmd         : UInt32     ; The current show state of the window
    ptMinPosition   : stPOINT ; The coordinates of the window's upper-left corner when the window is minimized.
@@ -246,7 +246,7 @@ typedef struct tagGUITHREADINFO {
  } GUITHREADINFO, *PGUITHREADINFO, *LPGUITHREADINFO;
 */
 Struct stGUITHREADINFO extends baseStructure {
-   cbSize       : UInt32 := ObjGetDataSize(this)
+   cbSize       : UInt32 := this.Size
    flags        : UInt32
    hwndActive   : IntPtr
    hwndFocus    : IntPtr

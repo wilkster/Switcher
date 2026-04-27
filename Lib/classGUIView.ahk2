@@ -667,7 +667,7 @@ Class clsTaskGUI {
    ;----------------------------------------------------------------------------
    lbRefresh(aWin, targetName :="") {
       ; Critical 1
-      rowNum := ListViewGetContent("Focused", this.guiObj.hWnd)
+      ; rowNum := ListViewGetContent("Focused", this.guiObj.hWnd)
       this.lvObj.Opt("-Redraw")	; prevent change from flashing listview
       this.tskViewObj.Populate(this.inTask, aWin, targetName)   ; Parent window needed for siblings/intask
       this.lvObj.Delete()
@@ -1440,8 +1440,11 @@ Class clsTaskGUI {
    }
    ;----------------------------------------------------------------------------
    ; Reset then optionally set the Focus timer
+   ; Note: Alpha 28 requires a return value for fat arrow functions
    ;----------------------------------------------------------------------------
-   setFocusTimer(how) => SetTimer(this.timerFocus, how ? 50 : 0)
+   setFocusTimer(how) {
+      SetTimer(this.timerFocus, how ? 50 : 0)
+   }
    ;-------------------------------------------------------------------------------
    ; Check to see if pop-up GUI loses focus and if so close it
    ; Called from a timer

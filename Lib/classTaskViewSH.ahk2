@@ -417,6 +417,7 @@ Class clsTaskView {
          } Else {
             If (BringWindowToTop(hWnd) = 0)
                warning("taskClass - BringWindowToTop fail for '" title "', Error=" A_LastError)
+            SetForegroundWindow(myParent) ; A little more subtle to bring the parent to the top
          }
 
          Try {
@@ -429,6 +430,7 @@ Class clsTaskView {
          ; For sibling switches the active will always be the parent
          ;
          ; AHK temp GUI wasn't used for task switching, so get the current active window
+         ; BUG - Active window may not exist due to switcher closing and not restoring anything, ignore below
          If (actWin = 0)
             actWin := WinExist("A")
 
@@ -436,9 +438,9 @@ Class clsTaskView {
             ; Was minmized
             ; debug("Restoring sibling window " WinGetClass(hWnd))
             WinRestore(myParent)
-         } Else If (actWin > 0 && myParent != actWin) {
+         } Else If (myParent != actWin) { ; actWin > 0 && 
             ; Sibling parent wasn't active
-            debug("Switching to parent window, This:" WinGetClass(hWnd) ", Parent:" WinGetClass(myParent) ",Active:" WinGetClass(actWin) ",State=" this.getWinState(hWnd))
+            debug("Switching to parent window, This:" WinGetClass(hWnd) ", Parent:" WinGetClass(myParent) ",Active:" hex(actWin) ",State=" this.getWinState(hWnd))
             SetForegroundWindow(myParent) ; A little more subtle to bring the parent to the top
          }
          /*

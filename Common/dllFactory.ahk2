@@ -1,7 +1,9 @@
 ;----------------------------------------------------------------------------
 ; DLL Factory, wrap system DLL calls
 ;----------------------------------------------------------------------------
-#Requires AutoHotkey v2.0 
+; #Requires AutoHotkey v2.0 
+#Requires AutoHotkey v2.1-
+
 #Include Structures.ahk2
 #Include Constants.ahk2
 ; #Include vda.ahk2
@@ -136,7 +138,40 @@ WaitForInputIdle(hWnd, to) {
    DllCall("Kernel32.dll\CloseHandle", "Ptr", hProcess)
    Return res
 }
+/**
+ * Set the system cursor to a busy hourglass or reset it
+ * @param busy true to set hourglass, false to reset
+ */
+SetBusyCursor(busy) {
+   Static savedCursors := Map()
+   Static cursorIDs := [32512, 32513, 32514, 32515, 32516, 32640, 32641, 32642, 32643, 32644, 32645, 32646, 32648, 32649, 32650, 32651]
 
+   If (busy) {
+      ; Load the hourglass cursor
+      hWait := DllCall("LoadCursor", "Ptr", 0, "Ptr", 32514, "Ptr")  ; IDC_WAIT = 32514
+      ; Replace all system cursors with the hourglass, saving originals
+      For id in cursorIDs {
+         hCurrent := DllCall("CopyImage",
+            "Ptr", DllCall("LoadCursor", "Ptr", 0, "Ptr", id, "Ptr"),
+            "UInt", 2,   ; IMAGE_CURSOR
+            "Int", 0, "Int", 0,
+            "UInt", 0, "Ptr")
+         savedCursors[id] := hCurrent
+         DllCall("SetSystemCursor", "Ptr", DllCall("CopyImage", "Ptr", hWait, "UInt", 2, "Int", 0, "Int", 0, "UInt", 0, "Ptr"), "UInt", id)
+      }
+   } Else {
+      ; Restore all saved cursors
+      If (savedCursors.Count > 0) {
+         For id, hCursor in savedCursors {
+            DllCall("SetSystemCursor", "Ptr", hCursor, "UInt", id)
+         }
+         savedCursors := Map()
+      } Else {
+         ; No saved cursors, just reload system defaults
+         DllCall("SystemParametersInfo", "UInt", 0x0057, "UInt", 0, "Ptr", 0, "UInt", 0)  ; SPI_SETCURSORS
+      }
+   }
+}
 ;----------------------------------------------------------------------------
 ; Set the system cursor for resizing and moving
 ; https://www.autohotkey.com/boards/viewtopic.php?t=13284

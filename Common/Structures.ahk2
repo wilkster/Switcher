@@ -187,13 +187,21 @@ Struct LVHITTESTINFO extends baseStructure {
 ;    rcWork : stRECT
 ;    dwFlags : Int32
 ; }
+; Struct stMONITORINFOEX extends baseStructure {
+;    cbSize   : Int32 := this.Size
+;    rcMonitor: stRECT
+;    rcWork   : stRECT
+;    dwFlags  : Int32
+;    _name    : 64
+;    name => StrGet(this._name, 64)
+; }
 Struct stMONITORINFOEX extends baseStructure {
    cbSize   : Int32 := this.Size
    rcMonitor: stRECT
    rcWork   : stRECT
    dwFlags  : Int32
-   _name    : 64
-   name => StrGet(this._name, 64)
+   _name    : UInt8[64] ; is this the correct way for Alpha 30???
+   name => StrGet(this._name.Ptr, 64) ; added Ptr here since arrays are struct classes
 }
 ; https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-display_devicea
 ; WCHAR is used since this is unicode

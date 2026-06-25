@@ -541,13 +541,15 @@ Class clsTaskView {
          ; For UWP procPath would equal ApplicationFrameHost.exe which has no resources
          } Else If (appName := UWP.AppName(hWnd)) {
             If (icnFname := UWP.AppToBMFile(appName)) {
-               If (ic := loadCacheOrFileIcon(icnFname, hWnd))
-                  Return ic
+               If (hic := loadCacheOrFileIcon(icnFname, hWnd))
+                  Return hic
+               else
+                  warning("getMyIcon: Didn't find icon for app " appName)
             } Else {
                warning("getMyIcon: Didn't find UWP logo for app " appName)
             }
          } Else {
-            warning("getMyIcon: Failed to find an existing UWP app name for " procPath)
+            warning("getMyIcon: Failed to find an icon for handle: " hex(hWnd))
          }
       }
       ; Try the default if all other attempts failed

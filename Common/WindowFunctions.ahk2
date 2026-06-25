@@ -174,7 +174,31 @@ GetAncestor(thisID, flags) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "
 SwitchToThisWindow(hWnd, how := 1) => DllCall("User32.dll\SwitchToThisWindow", "Ptr", hWnd, "UInt", how)
 SetForegroundWindow(hWnd) => DllCall("User32.dll\SetForegroundWindow", "Ptr", hWnd)
 BringWindowToTop(hWnd) => DllCall("User32.dll\BringWindowToTop", "Ptr", hWnd)
+/**
+ * Return the window above the specified window in Z-order
+ * @param hWnd Handle to the window
+ * @returns {Ptr} Handle to the window above, 0 if already on top
+ */
+GetTopGUIWindow(hWnd) => DllCall("User32\GetWindow", "Ptr", hWnd, "Uint", 3)
 
+/**
+ * Move a window to the top of the Z-order without activating it
+ * @param hWnd Handle to the window
+ * @param flag SWP_ flags (default: SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+ * @returns {Integer} Non-zero if successful
+ */
+SetWindowTop(hWnd, flag:=0x0013) {
+   if (GetTopGUIWindow(hWnd))
+      Return DllCall("User32\SetWindowPos"
+         , "Ptr", hWnd
+         , "Ptr", 0
+         , "Int", 0
+         , "Int", 0
+         , "Int", 0
+         , "Int", 0
+         , "UInt", flag ; SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
+      )
+}
 /**
  * Attempt to close a window and if necessary shut down the app. Do not use on child windows.
  * @param hWnd Handle to window to close (top level)
@@ -905,6 +929,9 @@ GetProcessDpiAwareness(hwnd) {
    DllCall("Kernel32.dll\CloseHandle", "Ptr", hProcess)
    Return DPI_AWARENESS
 }
+vSnyc() => DllCall("Dwmapi\DwmFlush", "Int") ; helps with some random flashes
+; ; RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW
+RedrawGui(hWnd) => DllCall("RedrawWindow", "Ptr", hWnd, "Ptr", 0, "Ptr", 0, "UInt", 0x0085)
 ; HICON:%IconHwnd%
 ; TODO - convert "::{" to true names
 Class Explorer {
@@ -1006,6 +1033,40 @@ Class Explorer {
          }
       }
       Return ""
+   }
+   /**
+    * Return a list of all files in the explorer pane
+    * @param {Integer} hwnd for explorer instance
+    * @returns {Array} list of files
+      TODO - handle if multiple files are selected
+    * 
+    */
+   Static getActivePathFiles(hwnd := WinExist("A")) {
+      hWactiveTab := Explorer.ActiveTabHandle(hwnd)
+      For objWindow in ComObject("Shell.Application").Windows {
+         If (objWindow.name = "File Explorer") {
+            If (objWindow.hwnd == hwnd) {
+               If (hWactiveTab) {
+                  hWthisTab := Explorer.TabHandle(objWindow)
+                  If (hWthisTab == hWactiveTab) {
+                     selection := objWindow.Document.SelectedItems()
+                     files := []
+                     If (selection.Count > 1) {
+                        For item in selection {
+                           files.Push(item.Path)
+                        }
+                     } Else {
+                        For item in objWindow.Document.Folder.Items() {
+                           files.Push(item.Path)
+                        }
+                     }
+                     Return files
+                  }
+               }
+            }
+         }
+      }
+      Return []
    }
    /**
     * Return a list of child tabs (or tab) on an explorer window

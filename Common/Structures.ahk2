@@ -207,11 +207,11 @@ Struct stMONITORINFOEX extends baseStructure {
 ; WCHAR is used since this is unicode
 Struct stDISPLAY_DEVICE extends baseStructure {
    cb           : Int32 := this.Size
-   _DeviceName  : 64
-   _DeviceString: 256
+   _DeviceName  : UInt8[64]
+   _DeviceString: UInt8[256]
    StateFlags   : UInt32   ; -> indicates if the device is connected to an active monitor DISPLAY_DEVICE_ACTIVE=0x001 & DISPLAY_DEVICE_PRIMARY_DEVICE=0x100
-   _DeviceID    : 256
-   _DeviceKey   : 256
+   _DeviceID    : UInt8[256]
+   _DeviceKey   : UInt8[256]
    DeviceName   => StrGet(this._DeviceName, 64)    ; \\.\DISPLAY1
    DeviceString => StrGet(this._DeviceString, 256) ; NVIDIA GeForce GTX 1660 SUPER
    DeviceID     => StrGet(this._DeviceID, 256)     ; Not Used
@@ -297,7 +297,7 @@ Struct stHFONT extends baseStructure {
    iClipPrecision : UInt8
    iQuality       : UInt8
    iPitchAndFamily: UInt8
-   _pszFaceName   : 32
+   _pszFaceName   : Uint8[32] ; was 32
    pszFaceName    => StrGet(this._pszFaceName, 32)
    ; Translate Points to char height
    calcCHeight(hdc, PointSize) {

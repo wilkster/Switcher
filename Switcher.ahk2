@@ -283,5 +283,14 @@ swapPrevSibling(Direction := 1) {
    ; If reload failed it will pass thru here
    SoundBeep(600, 200)
 }
+
+IdleWatcher(*) {
+   If (A_TimeIdlePhysical > 10*60000) {
+      DllCall("psapi\EmptyWorkingSet", "ptr", -1)
+      debug("Switcher Empty Working Set")
+   }
+}
+SetTimer(IdleWatcher, 60000)
+
 Suspend(0)
 dlog(A_ScriptName " is Ready for Processing")

@@ -296,7 +296,7 @@ Class clsTaskGUI {
          DropShadow(this.guiObj.hWnd)
       }
       ; NOTE - there are cases where losing focus we may not want to close the GUI
-      ; OnMessage(0x6, this.WM_ACTIVATE.Bind(this))
+      ; this.guiObj.OnMessage(0x6, this.WM_ACTIVATE.Bind(this))
 
       ; NOTE clvObj and lvObj could be merged into one class
       this.clvObj := LV_Colors(this.lvObj) ; CLV
@@ -1468,14 +1468,12 @@ Class clsTaskGUI {
    ; Called from a  callback
    ;-------------------------------------------------------------------------------
    ; setFocusTimer(how) => debug("Ignoring Focus Timer " how)
-   ; WM_ACTIVATE(wParam, lParam, msg, hwnd) {
-   ;    If (hwnd = this.guiObj.hWnd) {
-   ;       If (this.Active) {
-   ;          If (wParam & 0xFF = 0) {
-   ;             If (WinActive(this.guiObj.hWnd) = 0) {
-   ;                ; debug("GUI being deactivated")
-   ;                this.closeGUI()
-   ;             }
+   ; WM_ACTIVATE(guiObj, wParam, lParam, msg) {
+   ;    If (this.Active) {
+   ;       If (wParam & 0xFF = 0) {
+   ;          If (WinActive(this.guiObj.hWnd) = 0) {
+   ;             ; debug("GUI being deactivated")
+   ;             this.closeGUI()
    ;          }
    ;       }
    ;    }

@@ -700,5 +700,6 @@ isMashed(to) {
    Return false
 }
 isRepeat(to) => (A_ThisHotkey = A_PriorHotkey) AND (A_TimeSincePriorHotkey < to)
+PruneMemory() => DllCall("psapi\EmptyWorkingSet", "ptr", -1)
 
 dlog("Include File Loaded")

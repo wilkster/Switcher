@@ -286,11 +286,12 @@ swapPrevSibling(Direction := 1) {
 
 IdleWatcher(*) {
    If (A_TimeIdlePhysical > 10*60000) {
-      DllCall("psapi\EmptyWorkingSet", "ptr", -1)
+      PruneMemory()
       debug("Switcher Empty Working Set")
    }
 }
 SetTimer(IdleWatcher, 60000)
+PruneMemory()
 
 Suspend(0)
 dlog(A_ScriptName " is Ready for Processing")

@@ -144,7 +144,7 @@ Class monInfo {
 
          Return 1
       } Else {
-         elog("Failed to return monitor info for " . hMonitor)
+         Warning("Failed to return monitor info for " . hMonitor)
          Return 0
       }
    }

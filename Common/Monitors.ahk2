@@ -31,32 +31,30 @@ Class monInfo {
    Static cbEnumMonitors := CallbackCreate(monInfo.MonitorEnumProc.bind(this), "Fast", 4)
    Static lastCallback   := 0
    Static __new() {
+      this.cbMonLocations := this._monLocations.bind(this)
       this._monLocations()
       ; Every time monitors ore connected/disconnect or dpi changes then update location info
-      OnMessage(0x007E, monInfo._monLocations.bind(this))  ; WM_DISPLAYCHANGE
-
-   }
-   Static __delete() {
-      CallbackFree(this.cbEnumMonitors)
+      OnMessage(0x7E, this._cbMonLocations.bind(this))  ; WM_DISPLAYCHANGE
+      OnExit((*) => CallbackFree(this.cbEnumMonitors))
    }
    ;----------------------------------------------------------------------------
    ; Enum the monitors to capture their relative locations and other info
    ; monInfo.mnInfoHash contains all of the data
    ;----------------------------------------------------------------------------
+   Static _cbMonLocations(*) {
+      SetTimer(this.cbMonLocations, 0)
+      SetTimer(this.cbMonLocations, -6000)
+   }
    Static _monLocations(*) {
-      ; debounce repeats
-      If ((this.lastCallback + 100) < A_TickCount) {
-         this.mnInfoHash.Clear()
-         DllCall("User32\EnumDisplayMonitors", "Ptr", 0, "Ptr", 0, "Ptr", this.cbEnumMonitors, "Uint", 0)
-         this.MonCount := this.mnInfoHash.Count
-         debug("Monitors DPI or count changed = " this.mnInfoHash.Count)
-         For hMonitor in this.mnInfoHash {
-            objMonitor := this.mnInfoHash[hMonitor]
-            pInfo := dxva2.getPhysMonitorsInfo(hMonitor)
-            debug(" ⇨ Name=" pInfo.Name " (" objMonitor.Name ") , Width=" objMonitor.Width ", DPI=" objMonitor.DPI)
-         }
+      this.mnInfoHash.Clear()
+      DllCall("User32\EnumDisplayMonitors", "Ptr", 0, "Ptr", 0, "Ptr", this.cbEnumMonitors, "Uint", 0)
+      this.MonCount := this.mnInfoHash.Count
+      debug("Monitors DPI or count changed = " this.mnInfoHash.Count)
+      For hMonitor in this.mnInfoHash {
+         objMonitor := this.mnInfoHash[hMonitor]
+         pInfo := dxva2.getPhysMonitorsInfo(hMonitor)
+         debug(" ⇨ Name=" pInfo.Name " (" objMonitor.Name ") , Width=" objMonitor.Width ", DPI=" objMonitor.DPI)
       }
-      this.lastCallback := A_TickCount
    }
    ;----------------------------------------------------------------------------
    ; Enumerator for the monitor enum callback
@@ -526,7 +524,7 @@ Class dxva2 {
             logError("Failed to get GetPhysicalMonitorsFromHMONITOR")
          }
       } Else {
-         logError("Failed to get GetNumberOfPhysicalMonitorsFromHMONITOR, monitors=:" numPhyMon)
+         logError("Failed to get GetNumberOfPhysicalMonitorsFromHMONITOR for " hMon ", #monitors=:" numPhyMon)
       }
       pmInfo.pHandle := -1
       pmInfo.Name    := "Error"

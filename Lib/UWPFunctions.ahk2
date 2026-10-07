@@ -1,166 +1,89 @@
 #Include ..\common\dllFactory.ahk2
-#DllLoad "Propsys.dll"
-;----------------------------------------------------------------------
-; UWP Apps store their icons under a folder in WindowsApps
-; Look for all the UWP installed apps and cache the best square logo
-; Then later load that logo when needed for a particular app
-; NOTE Limiation now: if we install a new UWP app, we have to
-; restart Switcher to cache it's new logo
-;----------------------------------------------------------------------
 /*
-   app.name = Short text name of app, e.g. Phone Link
-   System.AppUserModel.PackageFamilyName = Microsoft.YourPhone_8wekyb3d8bbwe
-   app.path/System.AppUserModel.ID = PackageFullName without the center _0x86_ stuff, Microsoft.YourPhone_8wekyb3d8bbwe!App (AUMID)
-   System.AppUserModel.PackageFullName = full name, Microsoft.YourPhone_1.25032.82.0_x64__8wekyb3d8bbwe
-   System.AppUserMode.PackageInstallPath = folder C:\Program Files\WindowsApps\Microsoft.YourPhone_1.25032.82.0_x64__8wekyb3d8bbwe
-   PackageFamilyName: <PackageName>_<PublisherId>, e.g. Microsoft.Windows.Photos_8wekyb3d8bbwe
-      PackageName The name of the app as specified in the manifest.
-   PackageFullName: <PackageName>_<Version>_<Architecture>_<ResourceId>_<PublisherId>, e.g. Microsoft.Windows.Photos_2020.20090.1002.0_x64__8wekyb3d8bbwe
-      Uniquely identifies a specific version and build of the app
+   Return icon bitmaps for UWP apps including getting their AUMID string from the window handle
 */
 Class UWP {
-   Static UWPIcons := A_ScriptDir . "\Icons\UWPIcons"
-   Static AppMap := Map(), UPWFileMap := Map()
-   ; Cache any needed UWP icons on startup
-   Static __New() {
-      if (NOT DirExist(this.UWPIcons))
-         DirCreate(this.UWPIcons) 
-      now := A_TickCount
-      ; Iterating through this virtual apps folder is pretty slow (~500ms)
-      For app in ComObject('Shell.Application').NameSpace('shell:AppsFolder').Items {
-         ; Look for UWP Store Apps only, it taks ~500ms to iterate through all of the apps
-         ; Non-store apps look like this: calibre->{6D809377-6AF0-444B-8957-A3773F02200E}\Calibre2\calibre.exe
-         If (app.Path ~= "!") {
-            ; Store the AppUserModelId by the application display (icon) name
-            AppID               := StrSplit(app.Path, "!")[2] ; -> This can be used to find the Application Id                       = "xxx" match in manifest like we do for the executable now
-            appManifest         := app.ExtendedProperty("System.AppUserModel.PackageInstallPath") . "\AppxManifest.xml" ; this works, get path to manifest file + AppxManifest.xml
-            AUMID               := app.Path
-            this.AppMap[AUMID]  := {Name : app.Name, Manifest : appManifest, ID : AppID}
-            ; FullName := app.ExtendedProperty("System.AppUserModel.PackageFullName") ; available but not used, same as the folder name in windowsapps
-            ; Find an appropriate icon in the manifest if needed
-            this.CacheUWPLogoIfNeeded(AUMID)
-         }
+   ; Returns the AppUserModelID of a window, or "" if it has none ApplicationFrameHost
+   Static GetWindowAumid(hwnd) {
+      Static iid := 0, pkey := 0
+      If !iid {
+         iid := Buffer(16), pkey := Buffer(20)
+         DllCall("ole32\CLSIDFromString", "WStr", "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}", "Ptr", iid)
+         DllCall("ole32\CLSIDFromString", "WStr", "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}", "Ptr", pkey)
+         NumPut("UInt", 5, pkey, 16)                                ; pid = 5
       }
-      ;----------------------------------------------------------------------
-      ; Cache the icon file locations now
-      ;----------------------------------------------------------------------
-      dLog("Checked a total of " this.AppMap.Count " UWP Apps from shell:AppsFolder in " A_TickCount - now " msec")
-      now := A_TickCount
-      Loop Files this.UWPIcons . "\*.*" {
-         If (A_LoopFileExt ~= "i)ico|png") {
-            SplitPath(A_LoopFileFullPath, , , , &baseName)
-            this.UPWFileMap[baseName] := A_LoopFileFullPath
-         }
-      }
-      dLog("Cached a total of " this.UPWFileMap.Count " UWP Icons from " this.UWPIcons  " in " A_TickCount - now " msec")
 
+      aumid := ""
+      If DllCall("shell32\SHGetPropertyStoreForWindow", "Ptr", hwnd, "Ptr", iid, "Ptr*", &ps := 0) >= 0 {
+         pv := Buffer(24, 0)                                        ; PROPVARIANT, x64
+         If ComCall(5, ps, "Ptr", pkey, "Ptr", pv) >= 0             ; IPropertyStore::GetValue
+            If NumGet(pv, 0, "UShort") = 31                         ; VT_LPWSTR
+               aumid := StrGet(NumGet(pv, 8, "Ptr"))
+         DllCall("ole32\PropVariantClear", "Ptr", pv)
+         ObjRelease(ps)
+      }
+      Return aumid != "" ? aumid : this.GetWindowAumid2(hwnd)
    }
    /**
-    * Return the location of athe bitmap file for a UWP app
-    * @param AppName AMUID for UWP App
-    * @returns File name of the bitmap file for it (0 if not found)
+    * Backup method to try to get the icon
+    * @param hwnd Window Handle
+    * @returns {String} 
     */
-   Static AppToBMFile(AppName) {
-      return this.UPWFileMap.Get(AppName, 0)
+   Static GetWindowAumid2(hwnd) {
+      pid := 0
+      If hCore := DllCall("FindWindowExW", "Ptr", hwnd, "Ptr", 0, "WStr", "Windows.UI.Core.CoreWindow", "Ptr", 0, "Ptr")
+         DllCall("GetWindowThreadProcessId", "Ptr", hCore, "UInt*", &pid)
+      Else
+         DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "UInt*", &pid)   ; not a frame-hosted window
+      If !hProc := DllCall("OpenProcess", "UInt", 0x1000, "Int", 0, "UInt", pid, "Ptr")   ; PROCESS_QUERY_LIMITED_INFORMATION
+         Return ""
+      len := 256, buf := Buffer(len * 2)
+      rc := DllCall("GetApplicationUserModelId", "Ptr", hProc, "UInt*", &len, "Ptr", buf)
+      DllCall("CloseHandle", "Ptr", hProc)
+      Return rc ? "" : StrGet(buf)
    }
-   ;----------------------------------------------------------------------
-   ; Cache the UWPLogo if needed
-   ; AUMID = <PackageFamilyName>!<ApplicationId>
-   ; PackageFamilyName: This is the unique identifier for the app package,
-   ; typically derived from the app's name and publisher.
-   ; ApplicationId: This is the identifier for the specific application within the package.
-   ;----------------------------------------------------------------------
-   Static CacheUWPLogoIfNeeded(AUMID) {
-
-      AppObj         := this.AppMap[AUMID]
-      logoTargetLoc  := this.UWPIcons
-      targetFileName := logoTargetLoc "\" AppObj.Name ".png"
-      ; Don't overwrite either png or ico files if they exist
-      If (FileExist(logoTargetLoc "\" AppObj.Name ".png") OR FileExist(logoTargetLoc "\" AppObj.Name ".ico"))
-         Return 1
-
-      If (!FileExist(AppObj.Manifest)) {
-         warning("Could not find manifest: " AppObj.Manifest)
+   /**
+    * The simplest route is to skip the manifest and logo-asset hunting
+      (Square44x44Logo.targetsize-*.png, scale variants, etc.) and ask the shell
+      for the icon. UWP apps are addressable as shell:AppsFolder\<AUMID>, so you
+      can parse that to a PIDL and hand it to SHGetFileInfoW.
+    * Return a HICON from a UWP app knowing its AUMID, avoids old method of
+      going through the manifest file
+    * Caller must later destroy the icon
+    * @param aumid UWP AUMID string name
+    * @param {Integer} small Icon Size
+    * @returns {Integer | Float} 
+    */
+   Static GetUWPIcon(aumid, small := 0) {
+      If DllCall("shell32\SHParseDisplayName", "WStr", "shell:AppsFolder\" aumid, "Ptr", 0, "Ptr*", &pidl := 0, "UInt", 0, "Ptr", 0) < 0
          Return 0
-      }
-      SplitPath(AppObj.Manifest, &ManifestName, &dirname, &ext, &base)
-      Text := FileRead(AppObj.Manifest)
-      ; Iterate through the desired icon sizes, smaller ones have less padding
-      For token in [44, 71, 150, 310, "SmallLogo", "Logo"] {
-         ; Look for logo after AppID
-         reString := IsNumber(token) ? 'sU)Id="' AppObj.ID '".+Square' token 'x' token 'Logo="(.+)"' : 'sU)Id="' AppObj.ID '".+' token '="(.+)"'
-         if (pos := RegExMatch(Text, reString, &mArray)) {
-            ; Will need to scan files using the match as a pattern
-            SplitPath(mArray[1], , &dir, &ext, &base)
-            logoFileWC := dirname "\" dir "\" base "*." ext
-            ; Get the largest file we can
-            If (FileExist(sourceFileName := getBiggestLogo(logoFileWC))) {
-               ;----------------------------------------------------------------------
-               ; If we have the right image file then copy the image over to a know location
-               ; Later use imagemagick to convert to a ico file with multiple sizes
-               ; Magick %%A -alpha set -trim -define icon:auto-resize="256,192,128,96,64,48,32,24,16" ICO\%%~nA.ico
-               ;----------------------------------------------------------------------
-               Try {
-                  FileCopy(sourceFileName, targetFileName, 0)
-                  dlog("Copied " sourceFileName)
-                  dlog("    To " targetFileName)
-                  Return targetFileName
-               } Catch Error As e {
-                  logError("Error Copying " sourceFileName)
-               }
-            } Else
-               warning("Couldn't find icon using pattern " logoFileWC)
-            Break
-         } Else {
-            debug("Tried " token " in " AppObj.Manifest)
-         }
-      }
-      ;----------------------------------------------------------------------
-      ; Find the largest image that fits the path, better for resizing
-      ;----------------------------------------------------------------------
-      getBiggestLogo(patt) {
-         LogoPath := ""
-         nfs := lfs := 0
-         Loop Files patt {
-            ; Avoid alternate forms or high contrast versions
-            If ( NOT (A_LoopFileName ~= "altform|contrast|wide")) {
-               nfs := FileGetSize(A_LoopFilePath)
-               If nfs > lfs {
-                  LogoPath := A_LoopFilePath
-                  lfs := nfs
-               }
-            }
-         }
-         Return LogoPath
-      }
+      sfi := Buffer(A_PtrSize + 688, 0)               ; SHFILEINFOW
+      DllCall("shell32\SHGetFileInfoW", "Ptr", pidl, "UInt", 0, "Ptr", sfi, "UInt", sfi.Size, "UInt", 0x108 | small)                  ; SHGFI_ICON | SHGFI_PIDL | SHGFI_SMALLICON
+      DllCall("ole32\CoTaskMemFree", "Ptr", pidl)
+      Return NumGet(sfi, 0, "Ptr")
    }
    /**
-    * Return the Common Name for some UWP app from the window handle
-    * @param hWnd Handle of UWP app to get info on
-    * @param exeCheck default true, if it fails to find the appname the exe file name is returned
-    * @returns {String} UWP Short App Name or potentially the exe name
+    * Return a bitmap of arbitray size, We use HICONs internally so not really used here
+    * @param aumid AUMID of app
+    * @param {Integer} size 
+    * @param {Integer} flags 
+    * @returns {Integer} 
     */
-   Static AppName(hWnd, exeCheck := true) {
-      ; https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-id
-      Static PKEY_AppUserModel_ID := "{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3} 5" ; AppID
-      ; Get the AppID property directly, it is an ATOM so get the corresponding AppName string
-      Try {
-         If (Prop := GetProp(hWnd, PKEY_AppUserModel_ID)) {
-            AUMID := GetGlobalAtomName(Prop)
-            Return (AUMID AND this.AppMap.Has(AUMID)) ? this.AppMap[AUMID].Name : WinGetProcessName(hWnd)
-         } Else If (exeCheck AND WinExist(hWnd)) {
-            warning("Failed to return property for '" WinGetTitle(hWnd) "'")
-            Return WinGetProcessName(hWnd)
-         } Else {
-            Return ""
-         }
-      } Catch Error As e {
-         if (e.Message ~= "denied")
-            warning("Access denied for " hex(hWnd))
-         else
-            eLog(e, "Failed to get AppName:" A_LastError)
+   Static GetUWPBitmap(aumid, size := 48, flags := 0x4) {          ; 0x4 = SIIGBF_ICONONLY
+      static iid := 0
+      if !iid {
+         iid := Buffer(16)
+         DllCall("ole32\CLSIDFromString", "WStr", "{BCC18B79-BA16-442F-80C4-8A59C30C463B}", "Ptr", iid)  ; IShellItemImageFactory
       }
-      Return ""
-   }
+
+      If DllCall("shell32\SHCreateItemFromParsingName", "WStr", "shell:AppsFolder\" aumid, "Ptr", 0, "Ptr", iid, "Ptr*", &psif := 0) < 0
+         return 0
+
+      hbm := 0
+      ; GetImage is vtable index 3; SIZE is passed by value, so pack cx | cy<<32 into one Int64
+      ComCall(3, psif, "Int64", size | size << 32, "UInt", flags, "Ptr*", &hbm)
+      ObjRelease(psif)
+      return hbm                                                    ; caller must DeleteObject, 0 on failure
+   }   
 }
 dlog("Include File Loaded")

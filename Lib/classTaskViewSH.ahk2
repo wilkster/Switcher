@@ -535,21 +535,12 @@ Class clsTaskView {
          } Else If (ic := getWindowStaticIcon(hWnd)) {
             Return H . (this.hWndTohIcon[hWnd] := ic)
          ; 4. Otherwise see if we can load an icon from the process
-         } Else If (hic := loadCacheOrFileIcon(procPath := getProcessPath(hWnd), hWnd)) {
+         } Else If (hic := loadCacheOrFileIcon(getProcessPath(hWnd), hWnd)) {
             Return hic
-         ; 5. No icon resource in exe, try the pre-loaded UWP files or title
-         ; For UWP procPath would equal ApplicationFrameHost.exe which has no resources
-         } Else If (appName := UWP.AppName(hWnd)) {
-            If (icnFname := UWP.AppToBMFile(appName)) {
-               If (hic := loadCacheOrFileIcon(icnFname, hWnd))
-                  Return hic
-               else
-                  warning("getMyIcon: Didn't find icon for app " appName)
-            } Else {
-               warning("getMyIcon: Didn't find UWP logo for app " appName)
-            }
-         } Else {
-            warning("getMyIcon: Failed to find an icon for handle: " hex(hWnd))
+         ; 5. No icon resource in exe, try querying the UWP App itself
+         } Else If (appName := UWP.GetWindowAumid(hWnd)) {
+            if (ic := UWP.GetUWPIcon(appName))
+               return H . (this.hWndTohIcon[hWnd] := ic)
          }
       }
       ; Try the default if all other attempts failed

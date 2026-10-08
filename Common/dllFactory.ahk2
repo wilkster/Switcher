@@ -233,7 +233,7 @@ CursorTest() {
 ; and, optionally, the identifier of the process that created the window.
 ;----------------------------------------------------------------------
 GetWindowThreadProcessId(hWnd) {
-   tid := DllCall("GetWindowThreadProcessId", "Ptr", hWnd, "int*", &pid := 0)
+   tid := DllCall("User32\GetWindowThreadProcessId", "Ptr", hWnd, "int*", &pid := 0)
    Return pid
 }
 ;----------------------------------------------------------------------

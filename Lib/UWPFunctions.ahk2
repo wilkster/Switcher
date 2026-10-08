@@ -13,7 +13,6 @@ Class UWP {
          NumPut("UInt", 5, pkey, 16)                                ; pid = 5
       }
 
-      aumid := ""
       If DllCall("shell32\SHGetPropertyStoreForWindow", "Ptr", hwnd, "Ptr", iid, "Ptr*", &ps := 0) >= 0 {
          pv := Buffer(24, 0)                                        ; PROPVARIANT, x64
          If ComCall(5, ps, "Ptr", pkey, "Ptr", pv) >= 0             ; IPropertyStore::GetValue
@@ -22,7 +21,7 @@ Class UWP {
          DllCall("ole32\PropVariantClear", "Ptr", pv)
          ObjRelease(ps)
       }
-      Return aumid != "" ? aumid : this.GetWindowAumid2(hwnd)
+      Return aumid ??= this.GetWindowAumid2(hwnd)
    }
    /**
     * Backup method to try to get the icon
@@ -31,15 +30,13 @@ Class UWP {
     */
    Static GetWindowAumid2(hwnd) {
       pid := 0
-      If hCore := DllCall("FindWindowExW", "Ptr", hwnd, "Ptr", 0, "WStr", "Windows.UI.Core.CoreWindow", "Ptr", 0, "Ptr")
-         DllCall("GetWindowThreadProcessId", "Ptr", hCore, "UInt*", &pid)
-      Else
-         DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "UInt*", &pid)   ; not a frame-hosted window
-      If !hProc := DllCall("OpenProcess", "UInt", 0x1000, "Int", 0, "UInt", pid, "Ptr")   ; PROCESS_QUERY_LIMITED_INFORMATION
+      hCore := DllCall("User32\FindWindowExW", "Ptr", hwnd, "Ptr", 0, "WStr", "Windows.UI.Core.CoreWindow", "Ptr", 0, "Ptr")
+      pid := GetWindowThreadProcessId(hCore ? hCore : hwnd)
+      If !hProc := DllCall("Kernel32\OpenProcess", "UInt", 0x1000, "Int", 0, "UInt", pid, "Ptr")   ; PROCESS_QUERY_LIMITED_INFORMATION
          Return ""
       len := 256, buf := Buffer(len * 2)
-      rc := DllCall("GetApplicationUserModelId", "Ptr", hProc, "UInt*", &len, "Ptr", buf)
-      DllCall("CloseHandle", "Ptr", hProc)
+      rc := DllCall("Kernel32\GetApplicationUserModelId", "Ptr", hProc, "UInt*", &len, "Ptr", buf)
+      DllCall("Kernel32\CloseHandle", "Ptr", hProc)
       Return rc ? "" : StrGet(buf)
    }
    /**

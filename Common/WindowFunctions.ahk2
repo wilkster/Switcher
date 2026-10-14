@@ -6,7 +6,7 @@
  * @version 0.0.0
  ***********************************************************************/
 
-#Requires AutoHotkey v2.0 
+#Requires AutoHotkey v2.0
 #Include Constants.ahk2
 #Include Structures.ahk2
 #Include dllFactory.ahk2
@@ -31,21 +31,21 @@
 ; IgnoreWindows["tooltips_class32"] := 1
 
 Global IgnoreWindows := Map(
-     "Ghost", 1
+   "Ghost", 1
    , "Windows.UI.Core.CoreWindow", 1
-   , "Windows.UI.Core.AppWindow" , 1
+   , "Windows.UI.Core.AppWindow", 1
    , "MS-SDIa", 1
    , "MS-SDIb", 1
    , "Ghost", 1
    , "IME", 1
    , "WorkerW", 1
    , "ThumbnailDeviceHelperWnd", 1
-   , "Unknown",1 
-   , "OleMainThreadWndClass", 1 
-   , "SysShadow",1
-   , "CicMarshalWndClass",1
-   , "Chrome_MessageWindow",1
-   , "tooltips_class32",1
+   , "Unknown", 1
+   , "OleMainThreadWndClass", 1
+   , "SysShadow", 1
+   , "CicMarshalWndClass", 1
+   , "Chrome_MessageWindow", 1
+   , "tooltips_class32", 1
 )
 DontIgnore(hWnd) => !IgnoreWindows.Has(getClassName(hWnd))
 
@@ -59,10 +59,10 @@ Class transparentWindow {
       this.mHwnd := hwnd
       Try WinSetTransparent(0, this.mHwnd)
       ; WinSetStyle("-0x10000000",this.mHwnd)
-      ChangeWindowAnimation(hWnd,1)
+      ChangeWindowAnimation(hwnd, 1)
    }
    __Delete() {
-      ChangeWindowAnimation(this.mHwnd,0)
+      ChangeWindowAnimation(this.mHwnd, 0)
       ; WinSetStyle("+0x10000000",this.mHwnd)
       If (this.tp = 255) {
          Try WinSetTransparent("Off", this.mHwnd)
@@ -93,24 +93,21 @@ GhostWindowFromHungWindow(hWnd) => DllCall("User32.dll\GhostWindowFromHungWindow
  * @param {Integer} timeOut 
  * @returns {Integer}  0 = timedout, non-zero = succeed
  * If the function succeeds, the return value is nonzero. SendMessageTimeout
-   does not provide information about individual windows timing out if
-   HWND_BROADCAST is used.
+ *    does not provide information about individual windows timing out if
+ *    HWND_BROADCAST is used.
  */
 PingWindow(hWnd, timeOut := 3000) {
    ; SMTO_ABORTIFHUNG  | SMTO_BLOCK = 0x0003
    res := SendMessageTimeout(hWnd, 0, 0, 0, 0x0003, timeOut, &lpdwResult := 0)
-   return res
+   Return res
 }
 
-
-
-SetWindowLong(hWnd,opCode, Value) => DllCall("SetWindowLong", "int", hwnd, "int", opCode, "int", Value)
-GetWindowLong(hWnd,opCode) => DllCall("GetWindowLong", "Ptr", hWnd, "Uint", opCode, "Uint")
-
+SetWindowLong(hWnd, opCode, Value) => DllCall("SetWindowLong", "int", hWnd, "int", opCode, "int", Value)
+GetWindowLong(hWnd, opCode) => DllCall("GetWindowLong", "Ptr", hWnd, "Uint", opCode, "Uint")
 
 /*
    Window heirarchy options
-   - GetAncestor w/GA_PARENT Gets immediate parent window 
+   - GetAncestor w/GA_PARENT Gets immediate parent window
    * GetAncestor w/GA_ROOT walks up the window parent chain only, good for midi
 
    - GetWindow w/GW_OWNER Gets the immediate owner of the window  (unsed)
@@ -153,20 +150,16 @@ ParentOrOwner(hWnd) => DllCall("User32.dll\GetParent", "Ptr", hWnd)
 /*
 📌 Get root owner of a window
  GAROOTOWNER and GAROOT are both functions in the Win32 API that retrieve the root window by walking the chain of parent windows.
- The difference between the two is that GA_ROOTOWNER guarantees that the returned value is a top-level window. 
+ The difference between the two is that GA_ROOTOWNER guarantees that the returned value is a top-level window.
  Only top-level windows can be owners.
- Retrieves the owned root window by walking the chain of *parent* and *owner* windows returned by GetParent. 
+ Retrieves the owned root window by walking the chain of *parent* and *owner* windows returned by GetParent.
  Works like GetParent by walking up the GetParent chain (either owner or parent)
 */
 LastTopLevel(thisID) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", GA_ROOTOWNER, "Ptr")
 
-
-
-
 ; Change the owner of a window
-SetOwner(hwnd, newOwner) =>  DllCall("SetWindowLongPtr", "ptr", hwnd, "int", GWL_HWNDPARENT, "ptr", newOwner)
+SetOwner(hwnd, newOwner) => DllCall("SetWindowLongPtr", "ptr", hwnd, "int", GWL_HWNDPARENT, "ptr", newOwner)
 GetAncestor(thisID, flags) => DllCall("User32.dll\GetAncestor", "Ptr", thisID, "UInt", flags, "Ptr")
-
 
 ; Get the parent of this window
 ; Retrieves the parent window. This does not include the owner, as it does with the GetParent function.
@@ -187,8 +180,8 @@ GetTopGUIWindow(hWnd) => DllCall("User32\GetWindow", "Ptr", hWnd, "Uint", 3)
  * @param flag SWP_ flags (default: SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
  * @returns {Integer} Non-zero if successful
  */
-SetWindowTop(hWnd, flag:=0x0013) {
-   if (GetTopGUIWindow(hWnd))
+SetWindowTop(hWnd, flag := 0x0013) {
+   If (GetTopGUIWindow(hWnd))
       Return DllCall("User32\SetWindowPos"
          , "Ptr", hWnd
          , "Ptr", 0
@@ -267,7 +260,7 @@ DumpWindowCoords(hWnd) {
 ;----------------------------------------------------------------------
 GetWindowPlacementBuf(hWnd) {
    DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, stWINDOWPLACEMENT.Ptr, &buf)
-   return buf
+   Return buf
 }
 GetWindowPlacement(hWnd, buf) => DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", buf)
 SetWindowPlacement(hWnd, buf) => DllCall("User32.dll\SetWindowPlacement", "Ptr", hWnd, "Ptr", buf)
@@ -286,7 +279,6 @@ RestoreWindowPlacement(hWnd, buf) {
 ;    res.Height := rect.bottom - rect.top
 ;    Return res
 ; }
-
 
 GetLastActivePopup(hWnd) {
    /*
@@ -312,17 +304,17 @@ EnumChildWindows(hWnd, mcb, params := 0) => DllCall("User32.dll\EnumChildWindows
 UpdateWindow(hWnd)                       => DllCall("User32.dll\UpdateWindow", "Ptr", hWnd)
 GetGlobalAtomName(Prop) {
    sLen := VarSetStrCapacity(&AUMID, 256)
-   sz   := DllCall("Kernel32\GlobalGetAtomName", "Ptr", Prop, "Str", &AUMID, "Int", sLen)
+   sz := DllCall("Kernel32\GlobalGetAtomName", "Ptr", Prop, "Str", &AUMID, "Int", sLen)
    Return sz ? AUMID : 0
 }
 GetWindowMinMax(hWnd) {
-   static wp:= stWINDOWPLACEMENT()
+   Static wp := stWINDOWPLACEMENT()
    DllCall("User32.dll\GetWindowPlacement", "Ptr", hWnd, "Ptr", wp.Ptr)
    state := wp.showCmd	;showCmd
    Return state
 }
-IsTopLevelWindow(hWnd) => DllCall("User32.dll\IsTopLevelWindow","Ptr", hWnd) ; undocumented
-IsSnapped(hWnd) => DllCall("User32.dll\IsWindowArranged", "Ptr", hWnd) ; is 
+IsTopLevelWindow(hWnd) => DllCall("User32.dll\IsTopLevelWindow", "Ptr", hWnd) ; undocumented
+IsSnapped(hWnd) => DllCall("User32.dll\IsWindowArranged", "Ptr", hWnd) ; is
 IsIconic(hWnd) => DllCall("User32.dll\IsIconic", "Ptr", hWnd)
 IsZoomed(hWnd) => DllCall("User32.dll\IsZoomed", "Ptr", hWnd)
 ;----------------------------------------------------------------------
@@ -348,10 +340,10 @@ TopZWindow(hWnd) {
    }
 }
 
-GetForegroundWindow() => DllCall("User32\GetForegroundWindow","Ptr")
+GetForegroundWindow() => DllCall("User32\GetForegroundWindow", "Ptr")
 /*
-Changes the position and dimensions of the specified window. For a top-level window, 
-the position and dimensions are relative to the upper-left corner of the screen. 
+Changes the position and dimensions of the specified window. For a top-level window,
+the position and dimensions are relative to the upper-left corner of the screen.
 For a child window, they are relative to the upper-left corner of the parent window's client area.
 
 BOOL MoveWindow(
@@ -363,7 +355,7 @@ BOOL MoveWindow(
   [in] BOOL bRepaint
 );
 */
-MoveWindow(hWnd, X, Y, W, H, redraw := true) => DllCall("User32\MoveWindow", "Ptr", hWnd, "Int", X, "Int", Y, "Int", W, "Int", H, "Uint", redraw,"Int")
+MoveWindow(hWnd, X, Y, W, H, redraw := true) => DllCall("User32\MoveWindow", "Ptr", hWnd, "Int", X, "Int", Y, "Int", W, "Int", H, "Uint", redraw, "Int")
 
 ;----------------------------------------------------------------------------
 
@@ -394,7 +386,7 @@ SetWindowPos(hWnd, wx, wy, ww, wh, flag) {
 
 }
 
-RedrawWholeWindow(hWnd, Flags) => DllCall("RedrawWindow","Ptr", hWnd, "Ptr", 0, "Ptr", 0, "Uint", Flags)
+RedrawWholeWindow(hWnd, Flags) => DllCall("RedrawWindow", "Ptr", hWnd, "Ptr", 0, "Ptr", 0, "Uint", Flags)
 ;----------------------------------------------------------------------------
 ; Replace WaitWinClose (which doesn't work for UWP apps)
 ; NOTE - Good to wait before check so cleanup tasks don't find stray windows
@@ -443,7 +435,7 @@ IsCloaked(hwnd, Cloaked := 0) {
 ; https://stackoverflow.com/questions/55273112/dwmsetwindowattribute-does-not-work-with-dwmwa-cloak
 ;----------------------------------------------------------------------
 CloakWindow(hWnd, How) {
-   cloak := how
+   cloak := How
    Return DllCall("dwmapi\DwmSetWindowAttribute"
       , "Ptr", hWnd
       , "UInt", DWMWA_CLOAK
@@ -481,17 +473,17 @@ WinGetBorderOffset(hWnd) {
    ; Compute the left offset and the bottom offset
    ; wInfo.Left := (WW1 - WW2) / 2
    ; wInfo.Bottom := HH1 - HH2 ; top not impacted, only bottom
-   wInfo.T := YY1-YY2
-   wInfo.R := (XX2+WW2)-(XX1+WW1)
+   wInfo.T := YY1 - YY2
+   wInfo.R := (XX2 + WW2) - (XX1 + WW1)
    wInfo.L := XX1 - XX2
-   wInfo.B := (YY2+HH2) - (YY1+HH1) 
+   wInfo.B := (YY2 + HH2) - (YY1 + HH1)
    Return wInfo
 }
 ; My testing showed that GetWindowRect() included the adornments, while DwmGetWindowAttribute() did not.
 ; DwmGetWindowAttribute() gave me the actual border
 ; GetWindowRect(hWnd, ptRect) => DllCall("GetWindowRect", "Ptr", hWnd,"Ptr",ptRect)
 ; GetClientRect(hWnd, ptRect) => DllCall("GetClientRect", "Ptr", hWnd,"Ptr",ptRect)
-; The GetClientRect() API function provides the boundaries of the client area. 
+; The GetClientRect() API function provides the boundaries of the client area.
 ; Unfortunately, it confusingly returns left, top, width, height, while GetWindowRect() returns left, top, right, bottom.
 ; CalculateWindowBorders(hWnd) {
 ;    windowRect := stRECT()
@@ -696,12 +688,12 @@ GetMonitorIndexAtPos(Mx, My) {
  * @param {number} hwnd
  * @returns {number} how 1=disable, 0=enable
  */
-ChangeWindowAnimation(hWnd,how) {
+ChangeWindowAnimation(hWnd, how) {
    DllCall("dwmapi\DwmSetWindowAttribute"
-   , "Ptr", hWnd
-   , "UInt", DWMWA_TRANSITIONS_FORCEDISABLED
-   , "Int*", &how
-   , "UInt", 4)
+      , "Ptr", hWnd
+      , "UInt", DWMWA_TRANSITIONS_FORCEDISABLED
+      , "Int*", &how
+      , "UInt", 4)
    ; DllCall("dwmapi\DwmSetWindowAttribute"
    ; , "Ptr", hWnd
    ; , "UInt", DWMWA_CLOAK
@@ -752,7 +744,7 @@ Draw11Border(hwnd, color := 0x585858, enable := 1) {
 /*
 // Set Mica effect for layered window
     DWMWINDOWATTRIBUTE micaAttribute = 1029; // DWMWA_SYSTEMBACKDROP_TYPE
-    DwmSetWindowAttribute(hwnd, micaAttribute, 
+    DwmSetWindowAttribute(hwnd, micaAttribute,
                           &micaEffect, sizeof(micaEffect));
 */
 Mica11Backdrop(hWnd, how := DWMSBT_MAINWINDOW) {
@@ -858,18 +850,17 @@ DropShadow(hWnd) {
 ;----------------------------------------------------------------------
 ; Frame Shadow, rounded corners on Win 11
 ;----------------------------------------------------------------------
-FrameShadow(hwnd, margin:=20) {
-   DllCall("dwmapi.dll\DwmIsCompositionEnabled", "int*", &dwmEnabled:=0)
-   
-   if !dwmEnabled {
-       DllCall("user32.dll\SetClassLongPtr", "ptr", hwnd, "int", -26, "ptr", DllCall("user32.dll\GetClassLongPtr", "ptr", hwnd, "int", -26) | 0x20000)
-   }
-   else {
-       margins := Buffer(16, 0)    
-       NumPut("int", margin, "int", margin, "int", margin, "int", margin, margins)
+FrameShadow(hwnd, margin := 20) {
+   DllCall("dwmapi.dll\DwmIsCompositionEnabled", "int*", &dwmEnabled := 0)
 
-       DllCall("dwmapi.dll\DwmSetWindowAttribute", "ptr", hwnd, "Int", 2, "Int*", 2, "Int", 4)
-       DllCall("dwmapi.dll\DwmExtendFrameIntoClientArea", "ptr", hwnd, "ptr", margins)
+   If !dwmEnabled {
+      DllCall("user32.dll\SetClassLongPtr", "ptr", hwnd, "int", -26, "ptr", DllCall("user32.dll\GetClassLongPtr", "ptr", hwnd, "int", -26) | 0x20000)
+   } Else {
+      margins := Buffer(16, 0)
+      NumPut("int", margin, "int", margin, "int", margin, "int", margin, margins)
+
+      DllCall("dwmapi.dll\DwmSetWindowAttribute", "ptr", hwnd, "Int", 2, "Int*", 2, "Int", 4)
+      DllCall("dwmapi.dll\DwmExtendFrameIntoClientArea", "ptr", hwnd, "ptr", margins)
    }
 }
 
@@ -907,13 +898,13 @@ PROCESS_DPI_UNAWARE = 0,
 PROCESS_SYSTEM_DPI_AWARE = 1,
 PROCESS_PER_MONITOR_DPI_AWARE = 2
 \----------------------------------------------------------------------------*/
-GetWindowDpiAwarenessContext(hWnd) => DllCall("GetWindowDpiAwarenessContext","Ptr", hWnd,"Int")
-GetAwarenessFromDpiAwarenessContext(val) => DllCall("GetAwarenessFromDpiAwarenessContext","Ptr", val,"Int")
+GetWindowDpiAwarenessContext(hWnd) => DllCall("GetWindowDpiAwarenessContext", "Ptr", hWnd, "Int")
+GetAwarenessFromDpiAwarenessContext(val) => DllCall("GetAwarenessFromDpiAwarenessContext", "Ptr", val, "Int")
 ;----------------------------------------------------------------------
 ; Seems to work better than GetProcessDpiAwareness for Excel and Chrome
 ;----------------------------------------------------------------------
 GetWindowDPIAwareness(hWnd) {
-   return GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hWnd))
+   Return GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(hWnd))
 }
 GetProcessDpiAwareness(hwnd) {
    ;Static PROCESS_DPI_AWARENESS := {0: "PROCESS_DPI_UNAWARE", 1: "PROCESS_SYSTEM_DPI_AWARE", 2: "PROCESS_PER_MONITOR_DPI_AWARE"}
@@ -922,7 +913,7 @@ GetProcessDpiAwareness(hwnd) {
    If (!(hProcess := DllCall("Kernel32.dll\OpenProcess", "UInt", 0x0400, "Int", false, "UInt", ProcessId, "Ptr"))) {
       Return "OpenProcess ERROR"
    }
-   If (DllCall("Shcore.dll\GetProcessDpiAwareness", "Ptr", hProcess, "IntP", &DPI_AWARENESS:=-1)) {
+   If (DllCall("Shcore.dll\GetProcessDpiAwareness", "Ptr", hProcess, "IntP", &DPI_AWARENESS := -1)) {
       DllCall("Kernel32.dll\CloseHandle", "Ptr", hProcess)
       Return "GetProcessDpiAwareness ERROR"
    }
@@ -971,7 +962,7 @@ Class Explorer {
       pathHash := Map()
       For objWindow in ComObject("Shell.Application").Windows {
          If (objWindow.name = "File Explorer") {
-            if (hWthisTab := Explorer.TabHandle(objWindow))
+            If (hWthisTab := Explorer.TabHandle(objWindow))
                pathHash[hWthisTab] := objWindow.Document.folder.Self.Path
          }
       }
@@ -1001,7 +992,7 @@ Class Explorer {
          shellBrowser := ComObjQuery(objWindow, IID_IShellBrowser, IID_IShellBrowser)
          ComCall(3, shellBrowser, "uint*", &hWthisTab := 0)
       } Catch Error As e {
-         eLog(e)
+         elog(e)
       }
       Return hWthisTab
    }
@@ -1038,7 +1029,7 @@ Class Explorer {
     * Return a list of all files in the explorer pane
     * @param {Integer} hwnd for explorer instance
     * @returns {Array} list of files
-      TODO - handle if multiple files are selected
+    *       TODO - handle if multiple files are selected
     * 
     */
    Static getActivePathFiles(hwnd := WinExist("A")) {
@@ -1096,11 +1087,11 @@ Class Explorer {
    Static isTabWindow(hWnd) {
       Return (OSVersion() > 10 AND WinGetClass(hWnd) = "ShellTabWindowClass")
    }
-      /**
-    * Return a list of child tabs (or tab) on an explorer window
+   /**
+    * Activate a tab handle in explorer
     * Relys on caller making the window the foreground
     * @param {Integer} hwnd tab handle
-    * @returns {Array} array of control handles
+    * @returns {Boolean} True if succeded
     */
    Static activateTabHandle(tgtTabHwnd := 0) {
       parent := ParentOrOwner(tgtTabHwnd)
@@ -1113,22 +1104,23 @@ Class Explorer {
          }
       }
       WinActivate(parent)
+      ; DumpTabItems(tgtTabHwnd)
       If (tabCount > 1) {
-      ; HACK - Can't find an api to do this via an api
-         If (WinWaitActive(parent, , 0.2)) {
+
+         ; HACK - Can't find an api to do this via an api
+         If (WinWaitActive(parent, , 0.5)) {
             ; Set focus to the tab bar itself, otherwise we may not recognize the Ctrl-Tab
-            ControlFocus(tgtTabHwnd, parent) ; active the current tab, can't cherry pick tabs to focus on so loop
+            ; ControlFocus(tgtTabHwnd, parent) ; activate the current tab, can't cherry pick tabs to focus on so loop
             ; Loop until we have an active tab
-            Loop tabCount {
+            Loop tabCount - 1 {
                If (tgtTabHwnd = (actTabHwnd := this.ActiveTabHandle(parent)))
                   Return true
                ; Next tab
                SendInput("^{tab}")
-               TO := A_TickCount + 1000
+               TO := A_TickCount + 500
                ; The new tab will be active when the window tab changes
                While (actTabHwnd = this.ActiveTabHandle(parent) AND A_TickCount < TO) {
-                  ; debug(A_Index " " this.ActiveTabHandle(parent))
-                  Sleep(10)
+                  Sleep(20)
                }
             }
          } Else {
@@ -1139,6 +1131,155 @@ Class Explorer {
       }
       Return false
    }
+   Static activateTabHandlex(tgtTabHwnd := 0) {
+      parent := ParentOrOwner(tgtTabHwnd)
+      WinActivate(parent)
+      Return ExplorerTabs.Activate(tgtTabHwnd)
+   }
 }
 
+DumpTabItems(tabHwnd) {
+   root := DllCall("GetAncestor", "Ptr", tabHwnd, "UInt", 2, "Ptr")
+   out := Format("target tab hwnd: {:#x}`n`n", tabHwnd)
+   for t in ExplorerTabs._TabItems(root) {
+      ComCall(4, t.el, "ptr*", &psa := 0)                  ; GetRuntimeId (SAFEARRAY of int)
+      rid := ""
+      for v in ComValue(0x2003, psa)
+         rid .= Format("{:#x} ", v)
+      ComCall(29, t.el, "ptr*", &b := 0)                   ; CurrentAutomationId
+      aid := StrGet(b, "UTF-16"), DllCall("oleaut32\SysFreeString", "Ptr", b)
+      ComCall(30, t.el, "ptr*", &b := 0)                   ; CurrentClassName
+      cls := StrGet(b, "UTF-16"), DllCall("oleaut32\SysFreeString", "Ptr", b)
+      ComCall(31, t.el, "ptr*", &b := 0)                   ; CurrentHelpText
+      help := StrGet(b, "UTF-16"), DllCall("oleaut32\SysFreeString", "Ptr", b)
+      ComCall(36, t.el, "ptr*", &nwh := 0)                 ; CurrentNativeWindowHandle
+      out .= Format("'{}' sel={}`n  rid={}`n  autoId='{}' class='{}' help='{}' nativeHwnd={:#x}`n", t.name, t.sel, rid, aid, cls, help, nwh)
+   }
+   debug(out)
+}
+
+
+/**
+ * UIA Explorer Tab Class to activate and remove tabs
+ * Not really any better than what I use
+ * Issue with this code is there is no one-to-one association of the tab handle to the item number
+ * so we either have to track it somehow or do a full search each time.
+ */
+Class ExplorerTabs {
+   Static _uia := ComObject("{e22ad333-b25f-460c-83d0-0581107395c9}", "{30cbe57d-d9d0-452a-ab13-7ac5ac4825ee}")
+
+   ; Select the tab whose ShellTabWindowClass hwnd is given
+   Static Activate(tabHwnd) {
+      item := this._FindTabItem(tabHwnd, false)
+      If !item {
+         debug("Failed to find " hex(tabHwnd))
+         Return false
+      }
+      ComCall(16, item, "int", 10010, "ptr*", &pat := 0)   ; GetCurrentPattern(SelectionItem)
+      pat := ComValue(13, pat)
+      ComCall(3, pat)                                      ; Select
+      Return true
+   }
+
+   ; Close the tab by invoking the Button inside its TabItem
+   Static Close(tabHwnd) {
+      item := this._FindTabItem(tabHwnd, false)
+      If !item
+         Return false
+      cond := this._TypeCond(50000)                        ; Button
+      ComCall(5, item, "int", 4, "ptr", cond, "ptr*", &btn := 0)   ; FindFirst(Descendants)
+      If !btn
+         Return false
+      btn := ComValue(13, btn)
+      ComCall(16, btn, "int", 10000, "ptr*", &pat := 0)    ; GetCurrentPattern(Invoke)
+      pat := ComValue(13, pat)
+      ComCall(3, pat)                                      ; Invoke
+      Return true
+   }
+
+   Static _Select(el) {
+      ComCall(16, el, "int", 10010, "ptr*", &pat := 0)
+      pat := ComValue(13, pat)
+      ComCall(3, pat)
+   }
+
+   static _TypeCond(typeId) {
+      var := Buffer(24, 0)
+      NumPut("ushort", 3, var, 0)                          ; VT_I4
+      NumPut("int", typeId, var, 8)
+      ComCall(23, this._UIA, "int", 30003, "ptr", var, "ptr*", &cond := 0)
+      return ComValue(13, cond)
+   }
+
+   static _TabItems(rootHwnd) {
+      ComCall(6, this._UIA, "ptr", rootHwnd, "ptr*", &el := 0)   ; ElementFromHandle
+      el := ComValue(13, el)
+      cond := this._TypeCond(50019)                                ; TabItem
+      ComCall(6, el, "int", 4, "ptr", cond, "ptr*", &arr := 0)     ; FindAll(Descendants)
+      arr := ComValue(13, arr)
+      ComCall(3, arr, "int*", &n := 0)
+      items := []
+      loop n {
+         ComCall(4, arr, "int", A_Index - 1, "ptr*", &it := 0)
+         it := ComValue(13, it)
+         ComCall(23, it, "ptr*", &bstr := 0)                       ; CurrentName
+         name := StrGet(bstr, "UTF-16")
+         DllCall("oleaut32\SysFreeString", "Ptr", bstr)
+         ComCall(16, it, "int", 10010, "ptr*", &pat := 0)
+         pat := ComValue(13, pat)
+         ComCall(6, pat, "int*", &sel := 0)                        ; CurrentIsSelected
+         items.Push({el: it, name: name, sel: sel})
+      }
+      return items
+   }
+   ; Topmost ShellTabWindowClass child = active tab
+   static _ActiveTab(root) {
+      return DllCall("FindWindowEx", "Ptr", root, "Ptr", 0, "Str", "ShellTabWindowClass", "Ptr", 0, "Ptr")
+   }
+
+   static _FindTabItem(tabHwnd, restore := true) {
+      root := DllCall("GetAncestor", "Ptr", tabHwnd, "UInt", 2, "Ptr")   ; GA_ROOT
+      title := WinGetTitle(tabHwnd)
+      cands := [], origEl := 0
+      for t in this._TabItems(root) {
+         if t.sel
+            origEl := t.el
+         if t.name = title
+            cands.Push(t)
+      }
+      if cands.Length <= 1
+         return cands.Length ? cands[1].el : 0
+
+      ; Duplicate titles: the active tab's window is the selected item
+      if tabHwnd = this._ActiveTab(root) {
+         for c in cands
+            if c.sel
+               return c.el
+         return 0
+      }
+
+      ; Inactive duplicate: select each candidate, see whose window comes to the top
+      match := 0
+      for c in cands {
+         if c.sel
+            continue
+         prev := this._ActiveTab(root)
+         this._Select(c.el)
+         start := A_TickCount
+         while A_TickCount - start < 500 && this._ActiveTab(root) = prev
+            Sleep(10)
+         if this._ActiveTab(root) = tabHwnd {
+            match := c.el
+            break
+         }
+      }
+      if (restore || !match) && origEl
+         this._Select(origEl)
+      return match
+   }
+}
+
+; Usage
+; ExplorerTabs.Activate(0x12345)
+; ExplorerTabs.Close(0x12345)
 dlog("Include File Loaded")

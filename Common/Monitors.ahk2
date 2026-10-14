@@ -163,9 +163,12 @@ Class monInfo {
    ;----------------------------------------------------------------------
    Static MonitorNearWindow(hWnd) {
       Static MONITOR_DEFAULTTONEAREST := 0x00000002
-      Static MonitorFromWindow := GetModHandle("MonitorFromWindow", "User32.dll")
+      ; Static MonitorFromWindow := GetModHandle("MonitorFromWindow", "User32.dll")
       ; returns the handle to the monitor,
-      Return DllCall(MonitorFromWindow, "Ptr", hWnd, "Uint64", MONITOR_DEFAULTTONEAREST)
+      hMonitor := DllCall("User32\MonitorFromWindow", "Ptr", hWnd, "Uint64", MONITOR_DEFAULTTONEAREST)
+      if NOT this.mnInfoHash.has(hMonitor)
+         this._monLocations()
+      Return hMonitor
    }
    ;----------------------------------------------------------------------
    ; Destroy a handle when done with it
@@ -180,6 +183,8 @@ Class monInfo {
    ;----------------------------------------------------------------------------
    Static getMonitorInfo(hWnd) {
       hMonitor := this.MonitorNearWindow(hWnd)
+      if NOT this.mnInfoHash.has(hMonitor)
+         this._monLocations()
       Return this.mnInfoHash[hMonitor]
    }
 
@@ -218,7 +223,6 @@ Class monInfo {
    ; Called for each row in the switcher on populate
    ;----------------------------------------------------------------------
    Static MonitorDirection(hWnd) {
-
       If ((hMonitor := this.MonitorNearWindow(hWnd)) = this.activeMonitor) {
          Return 0
       } Else {

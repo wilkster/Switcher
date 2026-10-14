@@ -410,7 +410,7 @@ Class clsTaskGUI {
       ; Build up items in listview
       totPinned := totAltMon := totState := totDt := totAss := 0
       ; Current virtual desktop number
-      vid := cVdt := vda.DtCurrent
+      cVdt := vda.DtCurrent
 
       For idxHwnd, itHwnd in this.tskViewObj.Contents {
          If not WinExist(itHwnd) {
@@ -432,8 +432,9 @@ Class clsTaskGUI {
          ; Remove Edge/Google Chrome at end since titles are usaully long
          ;================== Limit/Pad title length ====================
          While ((l := StrLen(title)) > this.maxTitLen) {
+            itClass ??= WinGetClass(itHwnd)
             ; Explorer just trim the front
-            Switch WinGetClass(itHwnd) {
+            Switch itClass {
                Case "CabinetWClass", "ShellTabWindowClass":
                   title := " " . SubStr(Trim(title), 1, this.maxTitLen/2) . "…" . SubStr(Trim(title), l - this.maxTitLen/2)
                   Break

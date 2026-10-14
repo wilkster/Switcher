@@ -6,8 +6,16 @@
 ; & - Combine keys (held down at the same time) into a single hot key
 ; NOTE - Run Elevated if we want to work over Task Manager/Event Viewer/Task Scheduler
 ; =====================================================================
+;@Ahk2Exe-SetName Switcher
+;@Ahk2Exe-SetDescription Switcher - Task Switcher and Manager
+;@Ahk2Exe-Set Comments, Task Switcher and Manager
+;@Ahk2Exe-SetVersion 2026.10.12
+;@Ahk2Exe-SetCopyright Copyright (c) 2026 Tom Wilkason
+;@Ahk2Exe-SetOrigFilename Switcher.exe
+;@Ahk2Exe-SetMainIcon Icons\Switcher.ico
 #Requires AutoHotkey v2.1-alpha.23
 ;A_IconTip := "Tom's AHK Tools Version " A_AhkVersion ", running on " A_ComputerName
+DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "WStr", "Tom.Switcher") ; Force a unique icon
 TraySetIcon(A_ScriptDir "\Icons\Switcher.ico")
 dlog(A_ScriptName ": Loading Autohotkey Version " A_AhkVersion " on " A_ComputerName)
 A_MaxHotkeysPerInterval := 99000000
@@ -191,7 +199,7 @@ WheelLeft:: {
 goRight() {
    If (A_OSVer > 10) {
       If vda.DtCurrent = (vda.DtCount - 1)
-         Send("^#{Left}")
+         Send("^#{Left " (vda.DtCount - 1) "}")
       Else
          Send("^#{Right}")
    } Else {
@@ -205,7 +213,7 @@ goRight() {
 goLeft() {
    If (A_OSVer > 10) {
       If vda.DtCurrent = 0
-         Send("^#{Right}")
+         Send("^#{Right " (vda.DtCount - 1) "}")
       Else
          Send("^#{Left}")
    } Else {

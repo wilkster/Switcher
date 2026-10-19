@@ -26,11 +26,34 @@ class clsDesktopMonitor {
    ;---------------------------------------------------------------------------- 
    ; Callback for when a desktop changes, change the icon accordingly
    ;---------------------------------------------------------------------------- 
-   dtChangedcb(wParam, lParam, msg, hwnd) {
-      ; lParam+1 contains the new desktop, however we don't need it
+   dtChangedcb(wParam, dt, msg, hwnd) {
+      ; lParam contains the new desktop, however we don't need it
       ; debug("Desktop change detected")
+      static Colors := [
+      "0x1f1c17"  ; Desktop 1
+      ,"0x972225" ; Desktop 2
+      ,"0x1d5a88" ; .....
+      ,"0x10893E" 
+      ,"0x881798" 
+      ,"0x1f7898" 
+      ,"0x97940f" 
+      ,"0x1c277d"
+      ,"0x11e02d"
+      ,"0x4d61fd"
+      ]
+      ; First change the colors for the desktop, desktop is 0 based
+      dt++ ; dt is zero based
+      if (dt > Colors.Length)
+         TaskbarColor.SetTaskbarColor(0, 0, 0) ; should be default
+      Else {
+         color := Number(Colors[dt])
+         TaskbarColor.SetTaskbarColor(color, 0xE0, 2)
+         ; debug("Changing Color to " hex(color) " for desktop " dt)
+      }
       this.changeDesktopIcon(0)
+      Return
    }
+
 
    ;---------------------------------------------------------------------------- 
    ; If the desktop changed since last time, set the tray icon
@@ -83,10 +106,14 @@ class clsDesktopMonitor {
    ; Handle left button clicks on the tray icon
    ;---------------------------------------------------------------------------- 
    TrayMessage(wParam, lParam, uMsg, hWnd) {
+      ; debug(hex(lParam))
       Switch lParam {
+         Case 0x201:   ; user left-clicked tray icon
+            ; Send "#{Tab}"
          Case 0x202:   ; user left-clicked tray icon
+            ; Send "#{Tab}"
             nxt := GetKeyState("Ctrl") ? -1 : 1
-            debug("Next=" Mod((vda.DtCurrent + nxt), vda.DtCount))
+            ; debug("Next=" Mod((vda.DtCurrent + nxt), vda.DtCount))
             vda.DtCurrent := Mod((vda.DtCurrent + nxt), vda.DtCount)
             Sleep(100)
             this.changeDesktopIcon(1)
@@ -97,3 +124,134 @@ class clsDesktopMonitor {
       }
    }
 }
+/*
+Class to change the taskbar color when desktops change
+*/
+class TaskbarColor {
+   static rgb := 0, alpha := 0xFF, state := 2
+   static cb := 0, hooks := [], lastApply := 0
+   static applyFn := 0, rehookFn := 0
+   static Started := false
+   static trayWnds := Map()
+   static EVENT_SYSTEM_FOREGROUND := 0x0003
+   /**
+    * External api to set the taskbar color
+    * @param rgb RGB Color to use for the taskbar background, called when desktop changes
+    * @param {Integer} alpha Alpha blend for acceent 2
+    * @param {Integer} Iaccent Accent to use, 0 disabled, 1 gradient (solid color), 2 transparent
+                              gradient (alpha respected), 3 blur behind, 4 acrylic blur behind.
+   */
+   Static SetTaskbarColor(rgb, alpha := 0xFF, Iaccent := 2) {
+      If ( NOT this.Started) {
+         this.Start()
+      }
+      this.rgb   := rgb
+      this.state := Iaccent
+      this.alpha := alpha
+      this.Apply()
+   }
+   /**
+    * Internal functions below
+    */
+   static Start() {
+      If ( not this.Started) {
+         this.applyFn := ObjBindMethod(this, "Apply")
+         this.rehookFn := ObjBindMethod(this, "Rehook")
+         this.cb := CallbackCreate(ObjBindMethod(this, "OnEvent"), "F", 7)
+         OnMessage(DllCall("RegisterWindowMessage", "Str", "TaskbarCreated", "UInt"), (*) => SetTimer(this.rehookFn, -500))   ; explorer restarted
+         this.Rehook()
+         ; debug("Hook Installed")
+         this.Started := true
+         this.trayWnds := Map()
+         for class in ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+            for hwnd in WinGetList("ahk_class " class)
+               this.trayWnds[hwnd] := true
+
+         OnExit((*) => TaskbarColor.Stop())
+      }
+   }
+
+   static Stop() {
+      this.Unhook()
+      if (this.cb)
+         CallbackFree(this.cb)
+   }
+
+   static Hook(eMin, eMax, pid) {
+      ; WINEVENT_OUTOFCONTEXT = 0
+      return DllCall("user32\SetWinEventHook", "UInt", eMin, "UInt", eMax, "Ptr", 0
+                   , "Ptr", this.cb, "UInt", pid, "UInt", 0, "UInt", 0, "Ptr")
+   }
+
+   static Rehook() {
+      this.Unhook()
+      ; Foreground changes (Start, Search, Task View opening), any process
+      this.hooks.Push(this.Hook(this.EVENT_SYSTEM_FOREGROUND, this.EVENT_SYSTEM_FOREGROUND, 0)) ; EVENT_SYSTEM_FOREGROUND
+      ; this.hooks.Push(this.Hook(0x8000, 0x8000, 0))
+      ; Show/hide/location events, explorer.exe only
+      ; try {
+      ;    pid := WinGetPID("ahk_class Shell_TrayWnd")
+      ;    this.hooks.Push(this.Hook(0x8002, 0x800B, pid))
+      ; }
+      this.Apply()
+   }
+
+   static Unhook() {
+      for h in this.hooks
+         if h
+            DllCall("user32\UnhookWinEvent", "Ptr", h)
+      this.hooks := []
+   }
+   ; Keep this light: it runs for every matching event
+   Static OnEvent(hHook, event, hwnd, idObject, idChild, idThread, time) {
+      ; Known tray related classes
+      Static okClasses := Map(
+         "Shell_TrayWnd", 1, 
+         "Shell_SecondaryTrayWnd", 1, 
+         "SystemTray_Main", 1, 
+         "TopLevelWindowForOverflowXamlIsland", 1,
+         "XamlExplorerHostIslandWindow", 1,
+         "ForegroundStaging", 1,
+         "Progman", 1, ; click on desktop
+         )
+      ; TODO - trying to handle flashing and not setting properly
+      ; 0x0003 Foreground change
+      If (this.applyFn AND event == this.EVENT_SYSTEM_FOREGROUND AND idChild == 0x0 and WinExist(hwnd) AND okClasses.has(WinGetClass(hwnd))) {
+         ; debug("Window=" hex(hwnd) ", Child=" WinGetClass(hwnd))
+         ; Wait for the repainting to be done before we try to re-apply colors
+         SetTimer(this.applyFn, -300)      ; debounce; re-arming resets the delay
+         Return
+      }
+      ; if (winExist(hWnd))
+      ;    debug("Ignoring " hex(event) " for window " WinGetClass(hwnd))
+      ; else
+      ;    debug("Ignoring " hex(event) " for window handle " hex(hwnd))
+   }
+
+
+   /**
+    * Does the actual application of the color to the taskbar(s),
+    * This is somewhat undocumented and we have to reapply on a repaint
+    */
+   static Apply() {
+      rgb := this.rgb
+      ; debug("Apply Tasbar Color:" hex(rgb))
+      abgr := (this.alpha << 24) | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF)
+
+      accent := Buffer(16, 0)
+      NumPut("Int", this.state, "Int", 2, "UInt", abgr, "Int", 0, accent)
+
+      data := Buffer(A_PtrSize * 3, 0)
+      NumPut("Int", 19, data, 0)
+      NumPut("Ptr", accent.Ptr, data, A_PtrSize)
+      NumPut("UPtr", accent.Size, data, A_PtrSize * 2)
+
+      for class in ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+         for hwnd in WinGetList("ahk_class " class)
+            DllCall("user32\SetWindowCompositionAttribute", "Ptr", hwnd, "Ptr", data)
+
+      this.lastApply := A_TickCount
+   }
+}
+; TaskbarColor.Start(0x1E4D8C)
+; OnExit((*) => TaskbarColor.Stop())

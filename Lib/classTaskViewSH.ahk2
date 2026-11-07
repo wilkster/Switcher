@@ -111,7 +111,7 @@ Class clsTaskView {
    ;----------------------------------------------------------------------------
    ; Swap to prior task based on shell hook monitoring
    ;----------------------------------------------------------------------------
-   swapPrevTask(CheckAll := 0) {
+   swapPrevTask(SwapToMinimized := 0) {
       ; should we prune first?
       this.PruneDeadHandles()
       ; If we have at least two remaining
@@ -137,7 +137,7 @@ Class clsTaskView {
             For hWnd in recent {
                hClass := WinGetClass(hWnd)
                ; 2024-12-06 Minimize skip check
-               If (CheckAll OR WinGetMinMax(hWnd) >= 0) {
+               If (SwapToMinimized OR WinGetMinMax(hWnd) >= 0) {
                   If (hClass != myClass) {
                      ; Always swap to windows in other class (may be in same process)
                      this.myWinActivate(hWnd)

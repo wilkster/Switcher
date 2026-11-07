@@ -103,7 +103,6 @@ Class clsTaskGUI {
    lastLVIndex      := 0
    guiTransparency  := 250
    Gui              := 0
-   showDef          := SETTINGS.ShowDefault   ; set to 1 to show icons for current desktop/monitor
    ; Icons are for the RMB menu
    ImageListID := 0
    explorerPathCache := Map()
@@ -278,22 +277,21 @@ Class clsTaskGUI {
 
       ; Listbox will be resized each time we have rows to populate it
 
-
+      ; TODO - WinShow("NoActivate Hide") will probably work here if we need dimensions first
       this.lvObj.move(, , 0, 0)
       this.guiObj.Opt("+AlwaysOnTop")	;keeps it over other on top if set here and not at creation
       this.guiObj.move(0, 0, 0, 0)	; prevent initial flash/draw
-      ; SetAcrylicGlassEffect(3, 0x0000FF, this.guiTransparency, this.guiObj.hWnd)
       WinSetTransparent(0, this.guiObj.hWnd) ; Initially invisible
       ; Since this is a caption-less window, need to give some hits to Windows
       ; Shadow border, possibly no impact on windows 11 as there is a faded shadow there already
       ; round corners and drop shawdows on windows 11, ignored by windows 10
       If (this.osVer > 10) {
          Dark11Mode(this.guiObj.hWnd)
-         Round11Corners(this.guiObj.hWnd)
+         ; Round11Corners(this.guiObj.hWnd)
          Draw11Border(this.guiObj.hWnd, clsTaskGUI.bdColor)
-         ; Mica11Backdrop(this.guiObj.hWnd) ; Not sure this does anything
+         DropShadow(this.guiObj.hWnd) ; also rounds corners and gives a drop shadow
       } Else {
-         DropShadow(this.guiObj.hWnd)
+         LegacyDropShadow(this.guiObj.hWnd) ; works better with forced rounded corners on windows 10
       }
       ; NOTE - there are cases where losing focus we may not want to close the GUI
       ; this.guiObj.OnMessage(0x6, this.WM_ACTIVATE.Bind(this))
@@ -530,7 +528,7 @@ Class clsTaskGUI {
 
       Switch monInfo.MonitorDirection(isChild ? NextTopLevel(hWnd) : hWnd) {
          Case 0:
-            monText := this.showDef ? "" : ""
+            monText := SETTINGS.ShowActiveDesktop ? "" : ""
             Return 0
          Case 1:
             monText := "⇢"
@@ -551,7 +549,7 @@ Class clsTaskGUI {
    ;----------------------------------------------------------------------------
    DesktopText(&dtText, hWnd, cdVid, isChild) {
       ; Static dtNum := ["❶", "❷", "❸", "❹", "❺", "❻", "❼", "❽", "❾", "❿"]
-      Static dtNum := ["➀", "➁", "➂", "➃", "➄", "➅", "➆", "➇", "➈", "➉"]
+      Static dtNum := ["❶", "❷", "❸", "❹", "❺", "❻", "❼", "❼", "❼", "❿","❿","❿","❿","❿","❿"]
       ; static dtNum := ["𝟭", "𝟮", "𝟯", "𝟰", "𝟱", "𝟲", "𝟳", "𝟴", "𝟵","➉"]
       ; For children, make sure we test the top level parent  ↪【1】 〖1〗 http://xahlee.info/comp/unicode_matching_brackets.html
       mdt := 0
@@ -561,8 +559,8 @@ Class clsTaskGUI {
          Case 0:
             vid := vda.DtID(hWnd)
             If (vid = cdVid)
-               dtText := this.showDef ? dtNum[vid + 1] : "" 	; this desktop, blank
-            Else If (vid > 9)
+               dtText := SETTINGS.ShowActiveDesktop ? dtNum[vid + 1] : "" 	; this desktop, blank
+            Else If (vid > 15)
                dtText := "↪↪", mdt++
             Else If (vid > cdVid)
                dtText := "↪" dtNum[vid + 1], mdt++	; desktop to the right ↪
@@ -571,7 +569,7 @@ Class clsTaskGUI {
             Else
                dtText := dtNum[vid + 1] "↩", mdt++ 	; desktop to the left ↩
          Case 1:	; Locked on all desktops
-            dtText := "🔒Ⓐ", mdt++
+            dtText := "🔒🅐", mdt++
          Default:
             ; child windows give different values
             dtText := ""
@@ -653,7 +651,7 @@ Class clsTaskGUI {
          this.guiObj.Show("AutoSize X " GUI_x " Y " GUI_y)
       ; Make it mostly visible
       WinSetTransparent(this.guiTransparency, this.guiObj.hWnd)
-
+      ; this.guiObj.Show("")
       ; Close the gui automatically if user clicks outside of it
       this.setFocusTimer(1)
       ;35ms to here

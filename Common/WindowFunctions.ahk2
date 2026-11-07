@@ -718,6 +718,21 @@ Round11Corners(hWnd, how := 2) {
       , "UInt", 4)
 
 }
+/**
+ * Force a window to use regular dwm management, with
+ * drop shadows and round corners on windows 11
+ * @param hWnd Handle to window
+ */
+DropShadow(hWnd) {
+   DllCall("dwmapi\DwmSetWindowAttribute"
+   , "Ptr", hWnd
+   , "UInt", DWMWA_NCRENDERING_POLICY ; DWMWA_NCRENDERING_POLICY
+   , "Int*", DWMNCRP_ENABLED
+   , "UInt", 4)   ; cbAttribute 4 bytes
+   mar := Buffer(16, 0)
+   NumPut("Int", 1, "Int", 1, "Int", 1, "Int", 1, mar)   ; left, right, top, bottom margins
+   DllCall("dwmapi\DwmExtendFrameIntoClientArea", "Ptr", hwnd, "Ptr", mar)
+}
 ;----------------------------------------------------------------------
 ; Windows 11 change border color
 ; NOTE - this should work on any window
@@ -787,7 +802,7 @@ Mica11Backdrop(hWnd, how := DWMSBT_MAINWINDOW) {
 ;----------------------------------------------------------------------
 Round10Corners(guiObj, Scale := 1, Reset := 0, Width := 2) {
    ; Corner Radius ~ like windows 11
-   Static CRadius := 20
+   Static CRadius := 18
    Static COMPLEXREGION := 3
    ; Border is based on background color, reset is the same as background
    clrBorder := lumRGB(guiObj.BackColor, Reset ? 0 : 60)
@@ -805,11 +820,11 @@ Round10Corners(guiObj, Scale := 1, Reset := 0, Width := 2) {
          ; We need the window updated with the new region before we draw the border
          ; And we have to use a new blank region after setting it (different than Round Rect Region)
          ; Creates a new empty rectangle region from the window and frames it, but magically it works
-         If (myGDI.GetTempWindowRgn(hWnd, &hRgnTemp) = COMPLEXREGION) {
+         If (myGDI.GetTempWindowRgn(hWnd, &hRgnTemp:=0) = COMPLEXREGION) {
             ; Create the border brush and frame the window with it
             ; Would like to get the true border color for windows 10 here
             hBrush := myGDI.CreateSolidBrush(clrBorder)
-            hDC := myGDI.GetDC(hWnd)
+            hDC := myGDI.GetWindowDC(hWnd)
             myGDI.FrameRgn(hDC, hRgnTemp, hBrush, Width, Width)
             ; Clean up
             ; Hrgn is owned by the system after set window region, we don't delete it
@@ -818,9 +833,12 @@ Round10Corners(guiObj, Scale := 1, Reset := 0, Width := 2) {
             myGDI.ReleaseDC(hWnd, hDC)
          } Else {
             warning("Failed to return a proper region")
+            if (hRgnTemp)
+               myGDI.DeleteObject(hRgnTemp)
          }
       } Else {
          warning("Failed to set the region with a rounded rectangle")
+         myGDI.DeleteObject(Hrgn)
       }
    } Else {
       warning("CreateRoundRectRgn Failed")
@@ -832,25 +850,26 @@ Round10Corners(guiObj, Scale := 1, Reset := 0, Width := 2) {
 ; Old style drop shadow, seems to work better than FrameShadow
 ; Very subtle effect, but works with rounded corners on win10
 ;----------------------------------------------------------------------------
-DropShadow(hWnd) {
+LegacyDropShadow(hWnd) {
    Static CS_DROPSHADOW := 0x20000
    Static GCL_STYLE := -26
 
    ex := (A_PtrSize = 8 ? "Ptr" : "")	; 64bit should use GetClassLongPtr / SetClassLongPtr
    exClass := DllCall("GetClassLong" ex
-      , "UInt", hWnd
+      , "Ptr", hWnd
       , "Int", GCL_STYLE)
 
    DllCall("SetClassLong" ex
-      , "UInt", hWnd
+      , "Ptr", hWnd
       , "Int", GCL_STYLE
-      , "Int", exClass | CS_DROPSHADOW)
+      , "Ptr", exClass | CS_DROPSHADOW, "Ptr")
 
 }
+
 ;----------------------------------------------------------------------
-; Frame Shadow, rounded corners on Win 11
+; Frame Shadow, rounded corners on Win 11 along with drop shadows
 ;----------------------------------------------------------------------
-FrameShadow(hwnd, margin := 20) {
+FrameShadow(hwnd, margin := 1) {
    DllCall("dwmapi.dll\DwmIsCompositionEnabled", "int*", &dwmEnabled := 0)
 
    If !dwmEnabled {
@@ -858,7 +877,6 @@ FrameShadow(hwnd, margin := 20) {
    } Else {
       margins := Buffer(16, 0)
       NumPut("int", margin, "int", margin, "int", margin, "int", margin, margins)
-
       DllCall("dwmapi.dll\DwmSetWindowAttribute", "ptr", hwnd, "Int", 2, "Int*", 2, "Int", 4)
       DllCall("dwmapi.dll\DwmExtendFrameIntoClientArea", "ptr", hwnd, "ptr", margins)
    }

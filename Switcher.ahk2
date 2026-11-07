@@ -33,7 +33,7 @@ Suspend(1)
 ;----------------------------------------------------
 ;https://autohotkey.com/boards/viewtopic.php?t=6413
 ;----------------------------------------------------
-KeyHistory(100)               ; Added 10/2021
+KeyHistory(0)               ; Added 10/2021
 ListLines(0)                ; disable logging of keys
 ProcessSetPriority("A")     ; Above normal priority
 SetMouseDelay(-1)           ; don't sleep on mouse movements
@@ -49,25 +49,35 @@ DetectHiddenText(0)         ; Not sure why this is set
 Global defDPIContext   := DllCall("user32.dll\GetThreadDpiAwarenessContext", "Ptr")
 Global A_OSVer         := StrSplit(A_OSVersion, ".")[3] < 22000 ? "10" : "11"
 Global SETTINGS        := Object()
-SETTINGS.Path          := A_AppData . "\Switcher"
-SETTINGS.File          := SETTINGS.Path . "\Switcher.ini"
-SETTINGS.NumericKeypad := IniRead(SETTINGS.File,"Settings","NumericKeyboard",true)
-SETTINGS.ExplorerPath  := IniRead(SETTINGS.File,"Settings","ExplorerPath",true)
-SETTINGS.CheckAll      := IniRead(SETTINGS.File,"Settings","SwapToMinimized",false)
-SETTINGS.ShowDefault   := IniRead(SETTINGS.File,"Settings","ShowDefault",false) ; Enable to show icons for current monitor/desktop for windows on active monitor/deskop, by default they are blank
-If !FileExist(SETTINGS.Path)
-   DirCreate(SETTINGS.Path)
-IniWrite(SETTINGS.NumericKeypad, SETTINGS.File, "Settings", "NumericKeyboard")
-IniWrite(SETTINGS.ExplorerPath, SETTINGS.File, "Settings", "ExplorerPath")
-IniWrite(SETTINGS.CheckAll, SETTINGS.File, "Settings", "SwapToMinimized")
-IniWrite(SETTINGS.ShowDefault, SETTINGS.File, "Settings", "ShowDefault")
+
+SETTINGS.Path             := A_AppData . "\Switcher"
+SETTINGS.File             := SETTINGS.Path . "\Switcher.ini"
+; Read Boolean settings and put on RMB Tray Menu
+; TODO - Add settings for
+; - maximum width
+; - Default transparency
 
 A_TrayMenu.Add()
-; TODO - later add/handle check items in menu
-; - NumericKeyboard, Enable Numeric Keyboard Hotkeys
-; - ExplorerPath, Show full Explorer Paths
-; - SwapToMinimized, Allow Prior Window Swap to Minimized
-; - Add custom colors to INI file and read them in clsTaskGUI __new
+TraySetting("ExplorerPath", "Use Explorer full paths in Window list", true)
+TraySetting("ShowActiveDesktop", "Always show Desktop Icons in Window list", false)
+TraySetting("DesktopTrayColor", "Change Tray Color when switching Desktops", false)
+TraySetting("NumericKeypad", "Numeric Keyboard available (startup)", true)
+TraySetting("SwapToMinimized", "Allow swap to Minimized Window", false)
+TraySetting(keyName, MenuName, defVal) {
+   global SETTINGS
+   SETTINGS.%keyName% := IniRead(SETTINGS.File, "Settings", keyName, defVal)
+   A_TrayMenu.Add(MenuName, Toggle) ; Toggle the setting when selected
+   if SETTINGS.%keyName%
+      A_TrayMenu.Check(MenuName)
+   ; Closure for each key to toggle its value
+   Toggle(*) {
+      SETTINGS.%keyName% := !SETTINGS.%keyName%
+      A_TrayMenu.ToggleCheck(MenuName)
+      ; Save the new value
+      IniWrite(SETTINGS.%keyName%, SETTINGS.File, "Settings", keyName)
+   }      
+}
+A_TrayMenu.Add()
 A_TrayMenu.Add("Edit Settings File", (*) => Run(SETTINGS.File))  ; Creates a new menu item.
 
 DllCall("SetThreadDpiAwarenessContext", "Ptr", -4, "Ptr")
@@ -107,13 +117,18 @@ dlog("Global Objects Created")
 ;----------------------------------------------------------------------
 ExitHandler(ExitReason, ExitCode) {
    Global SETTINGS
+   If !FileExist(SETTINGS.Path)
+      DirCreate(SETTINGS.Path)
+   IniWrite(SETTINGS.NumericKeypad, SETTINGS.File, "Settings", "NumericKeyboard")
+   IniWrite(SETTINGS.ExplorerPath, SETTINGS.File, "Settings", "ExplorerPath")
+   IniWrite(SETTINGS.SwapToMinimized, SETTINGS.File, "Settings", "SwapToMinimized")
+   IniWrite(SETTINGS.ShowActiveDesktop, SETTINGS.File, "Settings", "ShowActiveDesktop")
+   IniWrite(SETTINGS.DesktopTrayColor, SETTINGS.File, "Settings", "DesktopTrayColor")
+
    ; desktopTracker.__delete()
    guiObject.__delete()
    keyPadAssigner.__delete()
    taskObject.__delete()
-   ; Not currently set in here, just by hand
-   ; IniWrite(SETTINGS.NumericKeypad, SETTINGS.Path, "Settings", "NumericKeyboard")
-   ; IniWrite(SETTINGS.ExplorerPath, SETTINGS.Path, "Settings", "ExplorerPath")
    dlog("Exiting Autohotkey, ExitReason=" ExitReason ", ExitCode=" ExitCode)
 }
 
@@ -271,7 +286,7 @@ smartWheelLeft() {
 swapPrevTask() {
    Global SETTINGS
    If (IsObject(taskObject))
-      taskObject.swapPrevTask(SETTINGS.CheckAll)
+      taskObject.swapPrevTask(SETTINGS.SwapToMinimized)
 }
 swapPrevSibling(Direction := 1) {
    If (IsObject(taskObject))

@@ -13,6 +13,7 @@
 ;@Ahk2Exe-SetCopyright Copyright (c) 2026 Tom Wilkason
 ;@Ahk2Exe-SetOrigFilename Switcher.exe
 ;@Ahk2Exe-SetMainIcon Icons\Switcher.ico
+;@Ahk2Exe-AddResource Switcher.manifest
 #Requires AutoHotkey v2.1-alpha.23
 ;A_IconTip := "Tom's AHK Tools Version " A_AhkVersion ", running on " A_ComputerName
 DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "WStr", "Tom.Switcher") ; Force a unique icon

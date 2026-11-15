@@ -42,8 +42,7 @@ Class monInfo {
    ; monInfo.mnInfoHash contains all of the data
    ;----------------------------------------------------------------------------
    Static _cbMonLocations(*) {
-      SetTimer(this.cbMonLocations, 0)
-      SetTimer(this.cbMonLocations, -6000)
+      SetTimer(this.cbMonLocations, -500)
    }
    Static _monLocations(*) {
       this.mnInfoHash.Clear()
@@ -223,18 +222,24 @@ Class monInfo {
    ; Called for each row in the switcher on populate
    ;----------------------------------------------------------------------
    Static MonitorDirection(hWnd) {
-      If ((hMonitor := this.MonitorNearWindow(hWnd)) = this.activeMonitor) {
-         Return 0
-      } Else {
-         delta := this.monDelta(hMonitor, this.activeMonitor)
-         ; Use either left/right or top/bottom, which is predominant
-         If (Abs(delta.X) > Abs(delta.Y))
-            ; right or left
-            Return (delta.X > 0) ? 1 : 2	; 1 = right, 2 = left
-         Else
-         ; below or above
-            Return (delta.Y > 0) ? 3 : 4   ; 3 = down (below), 4 = up (above)
-         Return 1
+      Try {
+         If ((hMonitor := this.MonitorNearWindow(hWnd)) = this.activeMonitor) {
+            Return 0
+         } Else {
+            delta := this.monDelta(hMonitor, this.activeMonitor)
+            ; Use either left/right or top/bottom, which is predominant
+            If (Abs(delta.X) > Abs(delta.Y))
+               ; right or left
+               Return (delta.X > 0) ? 1 : 2	; 1 = right, 2 = left
+            Else
+            ; below or above
+               Return (delta.Y > 0) ? 3 : 4   ; 3 = down (below), 4 = up (above)
+            Return 1
+         }
+      } Catch Error As e {
+         ; Can happen with KVM
+         elog(E)
+         Return 0         
       }
    }
    Static OnActiveMonitor(hWnd) => (this.MonitorNearWindow(hWnd) == this.activeMonitor)

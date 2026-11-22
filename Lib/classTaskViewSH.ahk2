@@ -539,8 +539,14 @@ Class clsTaskView {
             Return hic
          ; 5. No icon resource in exe, try querying the UWP App itself
          } Else If (appName := UWP.GetWindowAumid(hWnd)) {
-            if (ic := UWP.GetUWPIcon(appName))
-               return H . (this.hWndTohIcon[hWnd] := ic)
+            ; GetUWPIcon creates a new icon each call, so cache it per AUMID (one per app, never destroyed)
+            ; rather than per window, otherwise every UWP window would leak an icon when it closes
+            If !(ic := this.fNameTohIcon.Get(appName, 0)) {
+               If (ic := UWP.GetUWPIcon(appName))
+                  this.fNameTohIcon[appName] := ic
+            }
+            If (ic)
+               Return H . (this.hWndTohIcon[hWnd] := ic)
          }
       }
       ; Try the default if all other attempts failed

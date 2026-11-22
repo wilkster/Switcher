@@ -410,10 +410,14 @@ Class clsTaskGUI {
       ; Current virtual desktop number
       cVdt := vda.DtCurrent
 
-      For idxHwnd, itHwnd in this.tskViewObj.Contents {
+      ; Manual index (not For) so dead windows can be removed from the task list while looping:
+      ; after a removal the index is stepped back so the next window isn't skipped, and
+      ; idxHwnd always matches both the task list position and the listview row number
+      idxHwnd := 0
+      While (++idxHwnd <= this.tskViewObj.Entries) {
+         itHwnd := this.tskViewObj.Item[idxHwnd]
          If not WinExist(itHwnd) {
-            ; NOTE - also remove it from the list, will it mess up the remaining items in the array?
-            this.tskViewObj.RemoveAt(idxHwnd)
+            this.tskViewObj.RemoveAt(idxHwnd--)
             debug("Ignoring non existent window " hex(itHwnd))
             Continue
          }
@@ -475,14 +479,19 @@ Class clsTaskGUI {
          ;==================ICON====================
          icon := this.tskViewObj.getMyIcon(itHwnd)
 
-         If (icon == 0 OR IL_Add(this.ImageListID, icon), 0xFFFFFF, 1 == 0) {
+         ; Use the index IL_Add returns so each row always points at its own image,
+         ; even if an icon fails to load or a window was skipped above
+         If !(iconIdx := icon ? IL_Add(this.ImageListID, icon) : 0) {
             warning("Failed to load icon for:" title)
+            ; Fall back to the generic application icon; if even that fails, show no icon
+            If !(iconIdx := IL_Add(this.ImageListID, "shell32.dll", 3))
+               iconIdx := 99999
          }
 
          ;==================Finally ADD Row to Listview====================
          ; add the item, process Index & win list index in the list view
          ;❎ ❌ ✖ ☒ ✖ ✖❎❌☒ ✖✕✘×✖✕🗙 " ✖ "
-         res := this.lvObj.Add("Icon" . idxHwnd, title " ", " " stateText " ", pinText, monText, dtText, assText, " ✖ ", idxHwnd)
+         res := this.lvObj.Add("Icon" . iconIdx, title " ", " " stateText " ", pinText, monText, dtText, assText, " ✖ ", idxHwnd)
          If (res = 0)
             logError("Error adding:" title)
       }

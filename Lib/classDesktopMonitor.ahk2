@@ -180,8 +180,8 @@ class TaskbarColor {
          ; debug("Hook Installed")
          this.Started := true
          this.trayWnds := Map()
-         for class in ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
-            for hwnd in WinGetList("ahk_class " class)
+         for wClass in ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+            for hwnd in WinGetList("ahk_class " wClass)
                this.trayWnds[hwnd] := true
 
          OnExit((*) => TaskbarColor.Stop())
@@ -274,8 +274,8 @@ class TaskbarColor {
       data.pvData := accent.Ptr
       data.cbData := accent.Size
 
-      For class in ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
-         For hwnd in WinGetList("ahk_class " class)
+      For wClass in ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+         For hwnd in WinGetList("ahk_class " wClass)
             DllCall("user32\SetWindowCompositionAttribute", "Ptr", hwnd, "Ptr", data)
 
       this.lastApply := A_TickCount

@@ -120,7 +120,7 @@ ExitHandler(ExitReason, ExitCode) {
    Global SETTINGS
    If !FileExist(SETTINGS.Path)
       DirCreate(SETTINGS.Path)
-   IniWrite(SETTINGS.NumericKeypad, SETTINGS.File, "Settings", "NumericKeyboard")
+   IniWrite(SETTINGS.NumericKeypad, SETTINGS.File, "Settings", "NumericKeypad")
    IniWrite(SETTINGS.ExplorerPath, SETTINGS.File, "Settings", "ExplorerPath")
    IniWrite(SETTINGS.SwapToMinimized, SETTINGS.File, "Settings", "SwapToMinimized")
    IniWrite(SETTINGS.ShowActiveDesktop, SETTINGS.File, "Settings", "ShowActiveDesktop")

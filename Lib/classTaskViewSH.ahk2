@@ -410,7 +410,7 @@ Class clsTaskView {
          ; Another method is to seend a WM_NULL to the window with a SendMessage and timeout, trap the timeout as hung.
          If (IsHungAppWindow(hWnd)) {
             warning("Hung Window Detected:" title " Ghost=" GhostWindowFromHungWindow(hWnd) " vs hWnd=" hWnd)
-            If (gw := GhostWindowFromHungWindow(hWnd) != hWnd) {
+            If ((gw := GhostWindowFromHungWindow(hWnd)) != hWnd) {
                ; Try to raise the Ghost window
                SwitchToThisWindow(gw)
             }
